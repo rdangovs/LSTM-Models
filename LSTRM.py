@@ -68,64 +68,46 @@ class BasicLSTRMCell(RNNCell):
 		"""
 
 		if self._isMatrix: 
-			c, h = state
-			C = tf.reshape(c,[self._size_batch, self._hidden_size, self._hidden_size])
+			C = tf.reshape(state[0],[self._size_batch, self._hidden_size, self._hidden_size])
 		else:
-			c, h = state
+			c = state[0]
 
-		concat = _linear([inputs, h], 4 * self._hidden_size, True)
+		concat = _linear([inputs, state[1]], 4 * self._hidden_size, True)
 		# i = input_gate, j = new_input, f = forget_gate, o = output_gate
 		i, j, f, o = array_ops.split(value = concat, num_or_size_splits = 4, axis = 1)
-		
-		d = sigmoid(i) * tanh(j)
 
-		if self._isMatrix: 
-			d_temp = tf.matmul(C, tf.reshape(d,[self._size_batch,self._hidden_size,1]))
-			d = tf.reshape(d_temp,[self._size_batch,self._hidden_size])
+		if self._isMatrix:
+			d = tf.reshape(tf.matmul(C, tf.reshape(sigmoid(i) * tanh(j),[self._size_batch,self._hidden_size,1])),[self._size_batch,self._hidden_size])
+		else: 
+			d = sigmoid(i) * tanh(j)
 
 		#get the rotation matrix from f to d
-		step1 = tf.nn.l2_normalize(f, 1, epsilon=1e-8)
-		step2 = tf.nn.l2_normalize(d, 1, epsilon=1e-8)
-		costh = tf.reduce_sum(step1 * step2, 1)
-
+		u = tf.nn.l2_normalize(f, 1, epsilon=1e-8)
+		costh = tf.reduce_sum(u * tf.nn.l2_normalize(d, 1, epsilon=1e-8), 1)
 		sinth = tf.sqrt(1 - costh ** 2)
 		step4 = tf.reshape(costh, [self._size_batch, 1])
 		step5 = tf.reshape(sinth, [self._size_batch, 1])
-		step6 = tf.concat([step4, -step5, step5, step4], axis = 1)
-		Rth = tf.reshape(step6, [self._size_batch, 2, 2])
-		
+		Rth = tf.reshape(tf.concat([step4, -step5, step5, step4], axis = 1), [self._size_batch, 2, 2])
+
 		#get the u and v vectors 
-		u = step1 
-		step8 = d - tf.reshape(tf.reduce_sum(u * d, 1),[self._size_batch,1]) * u
-		v = tf.nn.l2_normalize(step8, 1, epsilon=1e-8)
+		v = tf.nn.l2_normalize(d - tf.reshape(tf.reduce_sum(u * d, 1),[self._size_batch,1]) * u, 1, epsilon=1e-8)
 
 		#concatenate the two vectors 
-		step9 = tf.reshape(u,[self._size_batch,1,self._hidden_size])
-		step14 = tf.reshape(v,[self._size_batch,1,self._hidden_size])
-		step15 = tf.concat([step9,step14], axis = 1)
-		step16 = tf.transpose(step15,[0,2,1])
+		step15 = tf.concat([tf.reshape(u,[self._size_batch,1,self._hidden_size]),tf.reshape(v,[self._size_batch,1,self._hidden_size])], axis = 1)
 
 		#do the batch matmul 
 		step10 = tf.reshape(u,[self._size_batch,self._hidden_size,1])
-		step11 = tf.transpose(step10,[0,2,1])
-		uuT = tf.matmul(step10,step11)
 		step12 = tf.reshape(v,[self._size_batch,self._hidden_size,1])
-		step13 = tf.transpose(step12,[0,2,1])
-		vvT = tf.matmul(step12,step13)
-		
-		#put all together 
-		I = tf.eye(self._hidden_size, batch_shape=[self._size_batch])
-		step17 = tf.matmul(tf.matmul(step16,Rth),step15)
-		res = I - uuT - vvT - step17
 
+		#put all together 
 		if self._isMatrix:
-			new_C = res
+			new_C = tf.eye(self._hidden_size, batch_shape=[self._size_batch]) - tf.matmul(step10,tf.transpose(step10,[0,2,1])) - tf.matmul(step12,tf.transpose(step12,[0,2,1])) - tf.matmul(tf.matmul(tf.transpose(step15,[0,2,1]),Rth),step15)
 			o = tf.reshape(o,[self._size_batch, self._hidden_size, 1])
-			new_h = tf.matmul(self._activation(new_C), o)
-			new_h = tf.reshape(new_h, [self._size_batch, self._hidden_size])
+			new_h = tf.reshape(tf.matmul(self._activation(new_C), o), [self._size_batch, self._hidden_size])
 			new_c = tf.reshape(new_C, [self._size_batch, self._hidden_size ** 2])
 		else: 
-			new_c = tf.reshape(tf.matmul(res, tf.reshape(c,[self._size_batch,self._hidden_size,1])), [self._size_batch, self._hidden_size])	
+			new_c = tf.reshape(tf.matmul(tf.eye(self._hidden_size, batch_shape=[self._size_batch]) - tf.matmul(step10,tf.transpose(step10,[0,2,1])) - tf.matmul(step12,tf.transpose(step12,[0,2,1])) 
+					- tf.matmul(tf.matmul(tf.transpose(step15,[0,2,1]),Rth),step15), tf.reshape(c,[self._size_batch,self._hidden_size,1])), [self._size_batch, self._hidden_size])	
 			new_h = self._activation(new_c) * o 
 
 		new_state = LSTMStateTuple(new_c, new_h)
