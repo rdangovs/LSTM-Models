@@ -9,6 +9,7 @@ from tensorflow.python.ops import init_ops
 from tensorflow.contrib.rnn import BasicLSTMCell, BasicRNNCell, GRUCell
 from EURNN import EURNNCell
 from GORU import GORUCell
+from GRRU import GRRUCell
 from LSTRM import BasicLSTRMCell
 from tensorflow.python.ops.rnn_cell_impl import LSTMStateTuple
 
@@ -141,6 +142,11 @@ def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT, learning_ra
 										  	dtype = tf.float32)
 	elif model == "GRU":
 		cell = GRUCell(n_hidden)
+		if h == None:
+			h = cell.zero_state(n_batch,tf.float32)
+		hidden_out, states = tf.nn.dynamic_rnn(cell, input_data, dtype=tf.float32)
+	elif model == "GRRU":
+		cell = GRRUCell(n_hidden, size_batch = n_batch)
 		if h == None:
 			h = cell.zero_state(n_batch,tf.float32)
 		hidden_out, states = tf.nn.dynamic_rnn(cell, input_data, dtype=tf.float32)
@@ -382,7 +388,7 @@ if __name__=="__main__":
 	parser = argparse.ArgumentParser(
 		description="NLP `text8` Character Prediction")
 
-	parser.add_argument("model", default='LSTM', help='Model name: LSTM, EURNN, GRU, GORU')
+	parser.add_argument("model", default='LSTM', help='Model name: LSTM, EURNN, GRU, GORU, GRRU')
 	parser.add_argument('-T', type=int, default=50, help='T-gram')
 	parser.add_argument("--n_epochs", '-E', type=int, default=20, help='num epochs')
 	parser.add_argument('--n_batch', '-B', type=int, default=32, help='batch size')

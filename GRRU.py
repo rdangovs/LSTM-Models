@@ -1,12 +1,7 @@
-#Adapted from `https://github.com/tensorflow/tensorflow/blob/r1.2/tensorflow/python/ops/rnn_cell_impl.py`
-
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import collections
-import hashlib
-import numbers
 import tensorflow as tf
 
 from tensorflow.python.framework import constant_op
@@ -79,69 +74,65 @@ def _rotation(x,
 		   tf.matmul(step5, tf.transpose(step5, [0,2,1])) - 
 		   tf.matmul(tf.matmul(tf.transpose(step3, [0,2,1]), Rth), step3))
 
-class BasicLSTRMCell(RNNCell):
-	"""
-	The Basic LSTRotationalM Cell. This model combines two ideas: 
-											1) rotational (as a subclass of) unitary memory. 
-											2) utility for matrix memory states.
-	"""
-	def __init__(self, hidden_size, forget_bias = 1.0, 
-				 activation = None, size_batch = 128, reuse = None, isMatrix = False, isActivation = False): 
-		super(BasicLSTRMCell, self).__init__(_reuse = reuse)
-		self._hidden_size = hidden_size 
-		self._forget_bias = forget_bias 
+"""
+a = tf.constant([[4.0,3.0,1.0]])
+b = tf.constant([[0.1,0.7,2.3]])
+c = _rotation(a, b, 1, 3)
+sess = tf.Session()
+result = sess.run(c)
+print(result)
+input()
+"""
+
+
+class GRRUCell(RNNCell):
+	"""Gated Rotational Recurrent Unit cell."""
+
+	def __init__(self,
+				 hidden_size,
+				 size_batch,
+			     activation = None,
+    			 reuse = None,
+    			 kernel_initializer = None,
+    		     bias_initializer = None):
+		super(GRRUCell, self).__init__(_reuse = reuse)
+		self._hidden_size = hidden_size
 		self._size_batch = size_batch
 		self._activation = activation or relu
-		self._isMatrix = isMatrix
-		self._isActivation = isActivation
+		self._kernel_initializer = kernel_initializer
+		self._bias_initializer = bias_initializer
 
-	@property 
+	@property
 	def state_size(self):
-		return (LSTMStateTuple(self._hidden_size, self._hidden_size))
-
-	@property 
-	def output_size(self): 
+		return self._hidden_size
+	
+	@property
+	def output_size(self):
 		return self._hidden_size
 
-
-	def call(self, inputs, state): 
-		"""	
-		Long short-term unitary memory cell (LSTUM).
-		"""
-
-		if self._isMatrix: 
-			C = tf.reshape(state[0],[self._size_batch, self._hidden_size, self._hidden_size])
-		else:
-			c = state[0]
-
-		concat = _linear([inputs, state[1]], 4 * self._hidden_size, True)
-		# i = input_gate, j = new_input, f = forget_gate, o = output_gate
-		i, j, f, o = array_ops.split(value = concat, num_or_size_splits = 4, axis = 1)
-
-		if self._isMatrix:
-			d = tf.reshape(tf.matmul(C, tf.reshape(sigmoid(i) * tanh(j),[self._size_batch,self._hidden_size,1])),[self._size_batch,self._hidden_size])
-		else: 
-			d = sigmoid(i) * tanh(j)
-
-		#get the rotation matrix from f to d
-		U = _rotation(f, d, self._size_batch, self._hidden_size)
-
-		#put all together 
-		if self._isMatrix:
-			o = tf.reshape(o,[self._size_batch, self._hidden_size, 1])
-			new_h = tf.reshape(tf.matmul(self._activation(U), o), [self._size_batch, self._hidden_size])
-			if self._isActivation:
-				new_c = self._activation(tf.reshape(U, [self._size_batch, self._hidden_size ** 2]))
-			else:
-				new_c = tf.reshape(U, [self._size_batch, self._hidden_size ** 2])
-		else: 
-			if self._isActivation:
-				new_c = self._activation(tf.reshape(tf.matmul(U, tf.reshape(c,[self._size_batch,self._hidden_size,1])), [self._size_batch, self._hidden_size]))
-				new_h = new_c * o
-			else:
-				new_c = tf.reshape(tf.matmul(U, tf.reshape(c,[self._size_batch,self._hidden_size,1])), [self._size_batch, self._hidden_size])
-				new_h = self._activation(new_c * o)
-
-		new_state = LSTMStateTuple(new_c, new_h)
-
-		return new_h, new_state
+	def call(self, inputs, state):
+		"""Gated Rotational Recurrent Unit (GRRU)"""
+		with vs.variable_scope("gates"): 
+			bias_ones = self._bias_initializer
+			if self._bias_initializer is None:
+				dtype = [a.dtype for a in [inputs, state]][0]
+				bias_ones = init_ops.constant_initializer(1.0, dtype = dtype)
+				value = sigmoid(
+				_linear([inputs, state], 2 * self._hidden_size, True, bias_ones,
+						self._kernel_initializer))
+			r, u = array_ops.split(value = value, num_or_size_splits = 2, axis = 1)
+		with vs.variable_scope("candidate"):
+			#We get the rotation between the mixed x and r, which acts on the mixed h
+			#x_mixed, h_mixed = array_ops.split(value = _linear([inputs, state], 2 * self._hidden_size, 
+			#												   True, self._bias_initializer, self._kernel_initializer),
+			#								   num_or_size_splits = 2, axis = 1) 
+			x_mixed = _linear(inputs, self._hidden_size, True, self._bias_initializer, self._kernel_initializer)
+			
+			U  = _rotation(x_mixed, r, self._size_batch, self._hidden_size)
+			#c  = self._activation(x_mixed + tf.reshape(tf.matmul(U, tf.reshape(h_mixed, [self._size_batch, self._hidden_size, 1])),
+			#										   [self._size_batch, self._hidden_size]))
+			c  = self._activation(x_mixed + tf.reshape(tf.matmul(U, tf.reshape(state, [self._size_batch, self._hidden_size, 1])),
+													   [self._size_batch, self._hidden_size]))
+			
+		new_h = u * state + (1 - u) * c
+		return new_h, new_h

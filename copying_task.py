@@ -12,6 +12,7 @@ from GORU import GORUCell
 from LSTSM import BasicLSTSMCell
 from LSTUM import BasicLSTUMCell
 from LSTRM import BasicLSTRMCell
+from GRRU import GRRUCell 
 from tensorflow.python.ops.rnn_cell_impl import LSTMStateTuple
 
 def random_variable(shape, dev): 
@@ -98,6 +99,9 @@ def main(model, T, n_iter, n_batch, n_hidden, capacity, comp, FFT, learning_rate
 										  	dtype = tf.float32)
 	elif model == "GRU":
 		cell = GRUCell(n_hidden)
+		hidden_out, _ = tf.nn.dynamic_rnn(cell, input_data, dtype=tf.float32)
+	elif model == "GRRU":
+		cell = GRRUCell(n_hidden, size_batch = n_batch)
 		hidden_out, _ = tf.nn.dynamic_rnn(cell, input_data, dtype=tf.float32)
 	elif model == "RNN":
 		cell = BasicRNNCell(n_hidden)
@@ -213,7 +217,7 @@ def main(model, T, n_iter, n_batch, n_hidden, capacity, comp, FFT, learning_rate
 if __name__=="__main__":
 	parser = argparse.ArgumentParser(
 		description="Copying Task")
-	parser.add_argument("model", default='LSTM', help='Model name: LSTM, LSTSM, LSTRM, LSTUM, EURNN, GRU, GORU')
+	parser.add_argument("model", default='LSTM', help='Model name: LSTM, LSTSM, LSTRM, LSTUM, EURNN, GRU, GRRU, GORU')
 	parser.add_argument('-T', type=int, default=20, help='Information sequence length')
 	parser.add_argument('--n_iter', '-I', type=int, default=3000, help='training iteration number')
 	parser.add_argument('--n_batch', '-B', type=int, default=128, help='batch size')
