@@ -213,7 +213,7 @@ def main(model, T, n_iter, n_batch, n_hidden, capacity, comp, FFT, learning_rate
 if __name__=="__main__":
 	parser = argparse.ArgumentParser(
 		description="Copying Task")
-	parser.add_argument("model", default='LSTM', help='Model name: LSTM, LSTSM, LSTUM, EURNN, GRU, GORU')
+	parser.add_argument("model", default='LSTM', help='Model name: LSTM, LSTSM, LSTRM, LSTUM, EURNN, GRU, GORU')
 	parser.add_argument('-T', type=int, default=20, help='Information sequence length')
 	parser.add_argument('--n_iter', '-I', type=int, default=3000, help='training iteration number')
 	parser.add_argument('--n_batch', '-B', type=int, default=128, help='batch size')

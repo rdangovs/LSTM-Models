@@ -147,11 +147,15 @@ print(result)
 #a = [tf.constant([[1.0, 2.0, 3.0],[1.0, 2.0, 3.0]]),tf.constant([[1.0, 5.0, 7.2],[1.0, 5.0, 7.2]]),tf.constant([[15.0, 2.8, 4.13],[15.0, 2.8, 4.13]])]
 #ans = gram_schmidt_tensors(a)
 
-a = tf.constant([[1.0,2.0,3.0,4.0,7.0]])
-b = tf.constant([[5.0,3.0,6.0,7.0,2.0]])
-c = rotation(a, b, 1, 5)
-
+a = tf.constant([[4.0,3.0]])
+b = tf.constant([[0.1,0.7]])
+d = tf.constant([100.0,37.0])
+c = rotation(a, b, 1, 2)
+e = tf.matmul(tf.reshape(c,[2,2]),tf.reshape(d,[2,1]))
+f = d * b 
 
 sess = tf.Session()
-result = sess.run(c)
+result = sess.run(e)
+print(result)
+result = sess.run(f)
 print(result)

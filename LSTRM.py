@@ -45,13 +45,14 @@ class BasicLSTRMCell(RNNCell):
 											2) utility for matrix memory states.
 	"""
 	def __init__(self, hidden_size, forget_bias = 1.0, 
-				 activation = None, size_batch = 128, reuse = None, isMatrix = None): 
+				 activation = None, size_batch = 128, reuse = None, isMatrix = False, isActivation = False): 
 		super(BasicLSTRMCell, self).__init__(_reuse = reuse)
 		self._hidden_size = hidden_size 
 		self._forget_bias = forget_bias 
 		self._size_batch = size_batch
 		self._activation = activation or relu
 		self._isMatrix = isMatrix
+		self._isActivation = isActivation
 
 	@property 
 	def state_size(self):
@@ -82,15 +83,15 @@ class BasicLSTRMCell(RNNCell):
 			d = sigmoid(i) * tanh(j)
 
 		#get the rotation matrix from f to d
-		u = tf.nn.l2_normalize(f, 1, epsilon=1e-8)
-		costh = tf.reduce_sum(u * tf.nn.l2_normalize(d, 1, epsilon=1e-8), 1)
+		u = tf.nn.l2_normalize(f, 1, epsilon=1e-12)
+		costh = tf.reduce_sum(u * tf.nn.l2_normalize(d, 1, epsilon=1e-12), 1)
 		sinth = tf.sqrt(1 - costh ** 2)
 		step4 = tf.reshape(costh, [self._size_batch, 1])
 		step5 = tf.reshape(sinth, [self._size_batch, 1])
 		Rth = tf.reshape(tf.concat([step4, -step5, step5, step4], axis = 1), [self._size_batch, 2, 2])
 
 		#get the u and v vectors 
-		v = tf.nn.l2_normalize(d - tf.reshape(tf.reduce_sum(u * d, 1),[self._size_batch,1]) * u, 1, epsilon=1e-8)
+		v = tf.nn.l2_normalize(d - tf.reshape(tf.reduce_sum(u * d, 1),[self._size_batch,1]) * u, 1, epsilon=1e-12)
 
 		#concatenate the two vectors 
 		step15 = tf.concat([tf.reshape(u,[self._size_batch,1,self._hidden_size]),tf.reshape(v,[self._size_batch,1,self._hidden_size])], axis = 1)
@@ -104,11 +105,19 @@ class BasicLSTRMCell(RNNCell):
 			new_C = tf.eye(self._hidden_size, batch_shape=[self._size_batch]) - tf.matmul(step10,tf.transpose(step10,[0,2,1])) - tf.matmul(step12,tf.transpose(step12,[0,2,1])) - tf.matmul(tf.matmul(tf.transpose(step15,[0,2,1]),Rth),step15)
 			o = tf.reshape(o,[self._size_batch, self._hidden_size, 1])
 			new_h = tf.reshape(tf.matmul(self._activation(new_C), o), [self._size_batch, self._hidden_size])
-			new_c = tf.reshape(new_C, [self._size_batch, self._hidden_size ** 2])
+			if self._isActivation:
+				new_c = self._activation(tf.reshape(new_C, [self._size_batch, self._hidden_size ** 2]))
+			else:
+				new_c = tf.reshape(new_C, [self._size_batch, self._hidden_size ** 2])
 		else: 
-			new_c = tf.reshape(tf.matmul(tf.eye(self._hidden_size, batch_shape=[self._size_batch]) - tf.matmul(step10,tf.transpose(step10,[0,2,1])) - tf.matmul(step12,tf.transpose(step12,[0,2,1])) 
-					- tf.matmul(tf.matmul(tf.transpose(step15,[0,2,1]),Rth),step15), tf.reshape(c,[self._size_batch,self._hidden_size,1])), [self._size_batch, self._hidden_size])	
-			new_h = self._activation(new_c) * o 
+			if self._isActivation:
+				new_c = self._activation(tf.reshape(tf.matmul(tf.eye(self._hidden_size, batch_shape=[self._size_batch]) - tf.matmul(step10,tf.transpose(step10,[0,2,1])) - tf.matmul(step12,tf.transpose(step12,[0,2,1])) 
+					- tf.matmul(tf.matmul(tf.transpose(step15,[0,2,1]),Rth),step15), tf.reshape(c,[self._size_batch,self._hidden_size,1])), [self._size_batch, self._hidden_size]))
+				new_h = new_c * o
+			else:
+				new_c = tf.reshape(tf.matmul(tf.eye(self._hidden_size, batch_shape=[self._size_batch]) - tf.matmul(step10,tf.transpose(step10,[0,2,1])) - tf.matmul(step12,tf.transpose(step12,[0,2,1])) 
+					- tf.matmul(tf.matmul(tf.transpose(step15,[0,2,1]),Rth),step15), tf.reshape(c,[self._size_batch,self._hidden_size,1])), [self._size_batch, self._hidden_size])
+				new_h = self._activation(new_c * o)
 
 		new_state = LSTMStateTuple(new_c, new_h)
 

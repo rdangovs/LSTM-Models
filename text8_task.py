@@ -9,10 +9,17 @@ from tensorflow.python.ops import init_ops
 from tensorflow.contrib.rnn import BasicLSTMCell, BasicRNNCell, GRUCell
 from EURNN import EURNNCell
 from GORU import GORUCell
+from LSTRM import BasicLSTRMCell
+from tensorflow.python.ops.rnn_cell_impl import LSTMStateTuple
+
 
 from ptb_iterator import *
 import re
 import pickle
+
+def random_variable(shape, dev): 
+  initial = tf.truncated_normal(shape, stddev=dev)
+  return tf.Variable(initial)
 
 notstates = False
 
@@ -25,26 +32,26 @@ def split_data():
 		print("Data length: ", len(raw_data))
 	
 	#splitting
-	train_raw_data = raw_data[:9*10**7]
-	validation_raw_data = raw_data[9*10**7:9*10**7+5*10**6]
-	test_raw_data = raw_data[-5*10**6:]
-
+	train_raw_data = raw_data[:10**7]
+	
+	validation_raw_data = raw_data[9*10**7:9*10**7+1*10**6]
+	test_raw_data = raw_data[-1*10**6:]
+	
 	#writing 
-	with open('data/text8.train.txt', 'w') as f: 
-		f.write(train_raw_data)
-	with open('data/text8.valid.txt', 'w') as f: 
+	#with open('data/text8.train.small.txt', 'w') as f: 
+	#	f.write(train_raw_data)
+	with open('data/text8.valid.small.txt', 'w') as f: 
 		f.write(validation_raw_data)
-	with open('data/text8.test.txt', 'w') as f: 
+	with open('data/text8.test.small.txt', 'w') as f: 
 		f.write(test_raw_data)
-
 
 def file_data(stage, n_batch, n_data, T, n_epochs, vocab_to_idx,readIntegers=True):
 	if stage == 'train':
-		file_name = 'data/text8.train.txt'
+		file_name = 'data/text8.train.small.txt'
 	elif stage == 'valid':
-		file_name = 'data/text8.valid.txt'	
+		file_name = 'data/text8.valid.small.txt'	
 	elif stage == 'test':
-		file_name = 'data/text8.test.txt'
+		file_name = 'data/text8.test.small.txt'
 
 	with open(file_name,'r') as f:
 		raw_data = f.read()
@@ -68,7 +75,7 @@ def file_data(stage, n_batch, n_data, T, n_epochs, vocab_to_idx,readIntegers=Tru
 	
 	#print(data[0:1000])
 
-	#Numsteps is your sequence length. In this case the earlier formula. 
+	#Numsteps is your sequence length. In this case the earlier formula... n-gram model  
 	def gen_epochs(n, numsteps, n_batch):
 		for i in range(n):
 			yield ptb_iterator(data, n_batch, numsteps) #doesn't matter it's ptb, still works for text8
@@ -82,7 +89,7 @@ def file_data(stage, n_batch, n_data, T, n_epochs, vocab_to_idx,readIntegers=Tru
 #a, b = file_data('valid', 20, 100000000, 50, 20, None)
 
 
-def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT, learning_rate, decay):
+def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT, learning_rate, decay, ismatrix, isactivation):
 	# --- Set data params ----------------
 	#Create Data
 	max_len_data = 100000000
@@ -109,6 +116,29 @@ def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT, learning_ra
 		if h == None:
 			h = cell.zero_state(n_batch,tf.float32)
 		hidden_out, states = tf.nn.dynamic_rnn(cell, input_data, dtype=tf.float32)
+	elif model == "LSTRM":
+		if ismatrix: 
+			cell = BasicLSTRMCell(n_hidden, size_batch = n_batch, forget_bias=1, isMatrix=True)
+			if h == None:
+				h = LSTMStateTuple(random_variable([n_batch, n_hidden ** 2], 1.0), 
+									random_variable([n_batch, n_hidden], 1.0))
+			hidden_out, states = tf.nn.dynamic_rnn(cell, input_data, 
+											  initial_state =
+											  LSTMStateTuple
+											  	(random_variable([n_batch, n_hidden ** 2], 1.0), 
+											  	 random_variable([n_batch, n_hidden], 1.0)), 
+											  dtype = tf.float32)
+		else: 
+			cell = BasicLSTRMCell(n_hidden, size_batch = n_batch, forget_bias=1, isMatrix=False)
+			if h == None:
+				h = LSTMStateTuple(random_variable([n_batch, n_hidden], 1.0), 
+								   random_variable([n_batch, n_hidden], 1.0))
+			hidden_out, states = tf.nn.dynamic_rnn(cell, input_data, 
+										  	initial_state =
+										  	(LSTMStateTuple
+										  		(random_variable([n_batch, n_hidden], 1.0), 
+										  	 	random_variable([n_batch, n_hidden], 1.0))), 
+										  	dtype = tf.float32)
 	elif model == "GRU":
 		cell = GRUCell(n_hidden)
 		if h == None:
@@ -167,7 +197,7 @@ def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT, learning_ra
 		print(i.name)
 
 	# --- save result ----------------------
-	filename = "./output/character/text8/T=" + str(T) + "/" + model  + "_N=" + str(n_hidden)# + "_lambda=" + str(learning_rate) + "_beta=" + str(decay)
+	filename = "./output/character/text8/T=" + str(T) + "/" + model  + "_N=" + str(n_hidden) + "_IM=" + str(ismatrix) + "_IA=" + str(isactivation) # + "_lambda=" + str(learning_rate) + "_beta=" + str(decay)
 		
 	if model == "EURNN"  or model == "GORU":
 		print(model)
@@ -362,8 +392,9 @@ if __name__=="__main__":
 	parser.add_argument('--FFT', '-F', type=str, default="False", help='FFT style, default is False')
 	parser.add_argument('--learning_rate', '-R', default=0.001, type=float)
 	parser.add_argument('--decay', '-D', default=0.9, type=float)
-
-	# parser.add_argument("--model_save_to", type=str, default="my-model", help='Name to save the file to')
+	parser.add_argument('--ismatrix', '-IM', default=None, type=str)
+	parser.add_argument('--isactivation', '-IA', default=None, type=str)
+	#parser.add_argument("--model_save_to", '-M', type=str, default=None, help='Name to save the file to')
 	# parser.add_argument("--model_load_from", type=str, default="", help='Name to load the model from')
 	# parser.add_argument("--num_layers", type=int, default=1, help='Int: Number of layers (1)')
 
@@ -389,6 +420,9 @@ if __name__=="__main__":
 			  	'FFT': dict['FFT'],
 			  	'learning_rate': dict['learning_rate'],
 			  	'decay': dict['decay'],
+			  	'ismatrix': dict['ismatrix'],
+			  	'isactivation': dict['isactivation']
+			  	#'model_save_to': dict['model_save_to']
 			}
 	print(kwargs)
 	main(**kwargs)
