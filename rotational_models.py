@@ -1,12 +1,7 @@
-#Adapted from `https://github.com/tensorflow/tensorflow/blob/r1.2/tensorflow/python/ops/rnn_cell_impl.py`
-
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import collections
-import hashlib
-import numbers
 import tensorflow as tf
 
 from tensorflow.python.framework import constant_op
@@ -79,7 +74,74 @@ def _rotation(x,
 		   tf.matmul(step5, tf.transpose(step5, [0,2,1])) - 
 		   tf.matmul(tf.matmul(tf.transpose(step3, [0,2,1]), Rth), step3))
 
+class GRRUCell(RNNCell):
+	"""Gated Rotational Recurrent Unit cell."""
 
+	def __init__(self,
+				 hidden_size,
+				 size_batch,
+			     activation = None,
+    			 reuse = None,
+    			 kernel_initializer = None,
+    		     bias_initializer = None,
+    		     isActivation = False,
+    		     isMix = False):
+		super(GRRUCell, self).__init__(_reuse = reuse)
+		self._hidden_size = hidden_size
+		self._size_batch = size_batch
+		self._activation = activation or relu
+		self._kernel_initializer = kernel_initializer
+		self._bias_initializer = bias_initializer
+		self._isActivation = isActivation 
+		self._isMix = isMix 
+
+	@property
+	def state_size(self):
+		return self._hidden_size
+	
+	@property
+	def output_size(self):
+		return self._hidden_size
+
+	def call(self, inputs, state):
+		"""Gated Rotational Recurrent Unit (GRRU)"""
+		with vs.variable_scope("gates"): 
+			bias_ones = self._bias_initializer
+			if self._bias_initializer is None:
+				dtype = [a.dtype for a in [inputs, state]][0]
+				bias_ones = init_ops.constant_initializer(1.0, dtype = dtype)
+				value = sigmoid(
+				_linear([inputs, state], 2 * self._hidden_size, True, bias_ones,
+						self._kernel_initializer))
+			r, u = array_ops.split(value = value, num_or_size_splits = 2, axis = 1)
+		with vs.variable_scope("candidate"):
+			#We get the rotation between the mixed x and r, which acts on the mixed h
+			if self._isMix: 
+				x_mixed, h_mixed = array_ops.split(value = _linear([inputs, state], 2 * self._hidden_size, 
+																   True, self._bias_initializer, self._kernel_initializer),
+												   num_or_size_splits = 2, axis = 1) 
+			else:
+				x_mixed = _linear(inputs, self._hidden_size, True, self._bias_initializer, self._kernel_initializer)
+			
+			U  = _rotation(x_mixed, r, self._size_batch, self._hidden_size)
+
+			if self._isActivation: 
+				if self._isMix: 
+					c  = self._activation(x_mixed + self._activation(tf.reshape(tf.matmul(U, tf.reshape(h_mixed, 
+							[self._size_batch, self._hidden_size, 1])), [self._size_batch, self._hidden_size])))
+				else: 
+					c =  self._activation(x_mixed + self._activation(tf.reshape(tf.matmul(U, tf.reshape(state, 
+							[self._size_batch, self._hidden_size, 1])), [self._size_batch, self._hidden_size])))
+			else:
+				if self._isMix:
+					c = self._activation(x_mixed + tf.reshape(tf.matmul(U, tf.reshape(h_mixed, 
+							[self._size_batch, self._hidden_size, 1])), [self._size_batch, self._hidden_size]))
+				else: 
+					c = self._activation(x_mixed + tf.reshape(tf.matmul(U, tf.reshape(state, 
+							[self._size_batch, self._hidden_size, 1])), [self._size_batch, self._hidden_size]))
+			
+		new_h = u * state + (1 - u) * c
+		return new_h, new_h
 
 class BasicLSTRMCell(RNNCell):
 	"""
@@ -121,7 +183,8 @@ class BasicLSTRMCell(RNNCell):
 		i, j, f, o = array_ops.split(value = concat, num_or_size_splits = 4, axis = 1)
 
 		if self._isMatrix:
-			d = tf.reshape(tf.matmul(C, tf.reshape(sigmoid(i) * tanh(j),[self._size_batch,self._hidden_size,1])),[self._size_batch,self._hidden_size])
+			d = tf.reshape(tf.matmul(C, tf.reshape(sigmoid(i) * tanh(j),
+				[self._size_batch,self._hidden_size,1])),[self._size_batch,self._hidden_size])
 		else: 
 			d = sigmoid(i) * tanh(j)
 
@@ -138,10 +201,12 @@ class BasicLSTRMCell(RNNCell):
 				new_c = tf.reshape(U, [self._size_batch, self._hidden_size ** 2])
 		else: 
 			if self._isActivation:
-				new_c = self._activation(tf.reshape(tf.matmul(U, tf.reshape(c,[self._size_batch,self._hidden_size,1])), [self._size_batch, self._hidden_size]))
+				new_c = self._activation(tf.reshape(tf.matmul(U, 
+						tf.reshape(c,[self._size_batch, self._hidden_size,1])), [self._size_batch, self._hidden_size]))
 				new_h = new_c * o
 			else:
-				new_c = tf.reshape(tf.matmul(U, tf.reshape(c,[self._size_batch,self._hidden_size,1])), [self._size_batch, self._hidden_size])
+				new_c = tf.reshape(tf.matmul(U, tf.reshape(c,[self._size_batch, self._hidden_size, 1])), 
+						[self._size_batch, self._hidden_size])
 				new_h = self._activation(new_c * o)
 
 		new_state = LSTMStateTuple(new_c, new_h)

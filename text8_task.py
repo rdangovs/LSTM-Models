@@ -5,18 +5,27 @@ from __future__	import print_function
 import numpy as np
 import argparse, os
 import tensorflow as tf
+import sys
+
 from tensorflow.python.ops import init_ops
 from tensorflow.contrib.rnn import BasicLSTMCell, BasicRNNCell, GRUCell
 from EURNN import EURNNCell
 from GORU import GORUCell
-from GRRU import GRRUCell
-from LSTRM import BasicLSTRMCell
+from rotational_models import GRRUCell, BasicLSTRMCell
 from tensorflow.python.ops.rnn_cell_impl import LSTMStateTuple
 
+from tensorflow.python.ops import math_ops
+from tensorflow.python.ops import nn_ops
 
 from ptb_iterator import *
 import re
 import pickle
+
+sigmoid = math_ops.sigmoid 
+tanh = math_ops.tanh
+matm = math_ops.matmul
+mul = math_ops.multiply 
+relu = nn_ops.relu
 
 def random_variable(shape, dev): 
   initial = tf.truncated_normal(shape, stddev=dev)
@@ -90,7 +99,8 @@ def file_data(stage, n_batch, n_data, T, n_epochs, vocab_to_idx,readIntegers=Tru
 #a, b = file_data('valid', 20, 100000000, 50, 20, None)
 
 
-def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT, learning_rate, decay, ismatrix, isactivation):
+def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT, learning_rate, 
+		 decay, ismatrix, isactivation, ismix, nonlinsig, adam):
 	# --- Set data params ----------------
 	#Create Data
 	max_len_data = 100000000
@@ -118,8 +128,12 @@ def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT, learning_ra
 			h = cell.zero_state(n_batch,tf.float32)
 		hidden_out, states = tf.nn.dynamic_rnn(cell, input_data, dtype=tf.float32)
 	elif model == "LSTRM":
+		if nonlinsig: 
+			act = sigmoid 
+		else: 
+			act = relu 
 		if ismatrix: 
-			cell = BasicLSTRMCell(n_hidden, size_batch = n_batch, forget_bias=1, isMatrix=True)
+			cell = BasicLSTRMCell(n_hidden, size_batch = n_batch, forget_bias=1, isMatrix=True, activation=act)
 			if h == None:
 				h = LSTMStateTuple(random_variable([n_batch, n_hidden ** 2], 1.0), 
 									random_variable([n_batch, n_hidden], 1.0))
@@ -130,7 +144,7 @@ def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT, learning_ra
 											  	 random_variable([n_batch, n_hidden], 1.0)), 
 											  dtype = tf.float32)
 		else: 
-			cell = BasicLSTRMCell(n_hidden, size_batch = n_batch, forget_bias=1, isMatrix=False)
+			cell = BasicLSTRMCell(n_hidden, size_batch = n_batch, forget_bias=1, isMatrix=False, activation=act)
 			if h == None:
 				h = LSTMStateTuple(random_variable([n_batch, n_hidden], 1.0), 
 								   random_variable([n_batch, n_hidden], 1.0))
@@ -146,7 +160,11 @@ def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT, learning_ra
 			h = cell.zero_state(n_batch,tf.float32)
 		hidden_out, states = tf.nn.dynamic_rnn(cell, input_data, dtype=tf.float32)
 	elif model == "GRRU":
-		cell = GRRUCell(n_hidden, size_batch = n_batch)
+		if nonlinsig: 
+			act = sigmoid 
+		else: 
+			act = relu 
+		cell = GRRUCell(n_hidden, size_batch = n_batch, activation = act, isActivation=isactivation, isMix=ismix)
 		if h == None:
 			h = cell.zero_state(n_batch,tf.float32)
 		hidden_out, states = tf.nn.dynamic_rnn(cell, input_data, dtype=tf.float32)
@@ -196,14 +214,40 @@ def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT, learning_ra
 
 
 	# --- Initialization ----------------------
-	optimizer = tf.train.RMSPropOptimizer(learning_rate=learning_rate, decay=decay).minimize(cost)
+	if adam: 
+		optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(cost)
+	else: 
+		optimizer = tf.train.RMSPropOptimizer(learning_rate=learning_rate, decay=decay).minimize(cost)
 	init = tf.global_variables_initializer()
 
 	for i in tf.global_variables():
 		print(i.name)
 
 	# --- save result ----------------------
-	filename = "./output/character/text8/T=" + str(T) + "/" + model  + "_N=" + str(n_hidden) + "_IM=" + str(ismatrix) + "_IA=" + str(isactivation) # + "_lambda=" + str(learning_rate) + "_beta=" + str(decay)
+	filename = "./output/character/text8/T=" + str(T) + "/" + model  + "_N=" + str(n_hidden) 
+
+	if model == "LSTRM": 
+		print(model)
+		if ismatrix: 
+			filename += "_M"
+		if isactivation: 
+			filename += "_A"
+		if nonlinsig: 
+			filename += "_sigmoid"
+		if adam: 
+			filename += "_Adam"
+
+	if model == "GRRU": 
+		print(model)
+		if isactivation: 
+			filename += "_A"
+		if ismix: 
+			filename += "_Mi"
+		if nonlinsig: 
+			filename += "_sigmoid"
+		if adam: 
+			filename += "_Adam"
+	#+ "_IM=" + str(ismatrix) + "_IA=" + str(isactivation) # + "_lambda=" + str(learning_rate) + "_beta=" + str(decay)
 		
 	if model == "EURNN"  or model == "GORU":
 		print(model)
@@ -331,9 +375,13 @@ def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT, learning_ra
 					empty,acc,loss,training_state = sess.run([optimizer, accuracy, cost, states], feed_dict = myfeed_dict)
 				#print("Sum: " , sum([i*i for i in training_state[0]]))
 
-				print("Iter " + str(step) + ", Minibatch Loss= " + \
+				print("Iter " + str(t) + ", Minibatch Loss= " + \
 					  "{:.6f}".format(loss) + ", Training Accuracy= " + \
 				  	  "{:.5f}".format(acc))
+
+				if np.isnan(loss): 
+					f.write("Encountered a NaN blow up! Fix the model/parameters...\n")
+					sys.exit()
 				
 				steps.append(t)
 				losses.append(loss)
@@ -398,8 +446,11 @@ if __name__=="__main__":
 	parser.add_argument('--FFT', '-F', type=str, default="False", help='FFT style, default is False')
 	parser.add_argument('--learning_rate', '-R', default=0.001, type=float)
 	parser.add_argument('--decay', '-D', default=0.9, type=float)
-	parser.add_argument('--ismatrix', '-IM', default=None, type=str)
-	parser.add_argument('--isactivation', '-IA', default=None, type=str)
+	parser.add_argument('--ismatrix', '-M', default="False", type=str)
+	parser.add_argument('--isactivation', '-A', default="False", type=str)
+	parser.add_argument('--ismix', '-Mi', default="False", type=str)
+	parser.add_argument('--nonlinsig', '-NLS', default="False", type=str)
+	parser.add_argument('--adam', '-Ad', default="False", type=str)
 	#parser.add_argument("--model_save_to", '-M', type=str, default=None, help='Name to save the file to')
 	# parser.add_argument("--model_load_from", type=str, default="", help='Name to load the model from')
 	# parser.add_argument("--num_layers", type=int, default=1, help='Int: Number of layers (1)')
@@ -427,7 +478,10 @@ if __name__=="__main__":
 			  	'learning_rate': dict['learning_rate'],
 			  	'decay': dict['decay'],
 			  	'ismatrix': dict['ismatrix'],
-			  	'isactivation': dict['isactivation']
+			  	'isactivation': dict['isactivation'], 
+			  	'ismix': dict['ismix'], 
+			  	'nonlinsig': dict['nonlinsig'],
+			  	'adam': dict['adam']
 			  	#'model_save_to': dict['model_save_to']
 			}
 	print(kwargs)
