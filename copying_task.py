@@ -11,9 +11,17 @@ from EURNN import EURNNCell
 from GORU import GORUCell
 from LSTSM import BasicLSTSMCell
 from LSTUM import BasicLSTUMCell
-from LSTRM import BasicLSTRMCell
-from GRRU import GRRUCell 
+from rotational_models import GRRUCell, BasicLSTRMCell
 from tensorflow.python.ops.rnn_cell_impl import LSTMStateTuple
+
+from tensorflow.python.ops import math_ops
+from tensorflow.python.ops import nn_ops
+
+sigmoid = math_ops.sigmoid 
+tanh = math_ops.tanh
+matm = math_ops.matmul
+mul = math_ops.multiply 
+relu = nn_ops.relu
 
 def random_variable(shape, dev): 
   initial = tf.truncated_normal(shape, stddev= dev)
@@ -31,7 +39,7 @@ def copying_data(T, n_data, n_sequence):
 	
 	return x, y
 
-def main(model, T, n_iter, n_batch, n_hidden, capacity, comp, FFT, learning_rate, decay, ismatrix):
+def main(model, T, n_iter, n_batch, n_hidden, capacity, comp, FFT, learning_rate, decay, ismatrix, isactivation, ismix, nonlinsig):
 	learning_rate = float(learning_rate)
 	decay = float(decay)
 
@@ -101,8 +109,12 @@ def main(model, T, n_iter, n_batch, n_hidden, capacity, comp, FFT, learning_rate
 		cell = GRUCell(n_hidden)
 		hidden_out, _ = tf.nn.dynamic_rnn(cell, input_data, dtype=tf.float32)
 	elif model == "GRRU":
-		cell = GRRUCell(n_hidden, size_batch = n_batch)
-		hidden_out, _ = tf.nn.dynamic_rnn(cell, input_data, dtype=tf.float32)
+		if nonlinsig: 
+			act = sigmoid 
+		else: 
+			act = relu 
+		cell = GRRUCell(n_hidden, size_batch = n_batch, activation = act, isActivation=isactivation, isMix=ismix)
+		hidden_out, _ = tf.nn.dynamic_rnn(cell, input_data, dtype = tf.float32)
 	elif model == "RNN":
 		cell = BasicRNNCell(n_hidden)
 		hidden_out, _ = tf.nn.dynamic_rnn(cell, input_data, dtype=tf.float32)
@@ -149,6 +161,15 @@ def main(model, T, n_iter, n_batch, n_hidden, capacity, comp, FFT, learning_rate
 			filename += "_FFT"
 		else:
 			filename = filename + "_L=" + str(capacity)
+	
+	if model == "GRRU": 
+		print(model)
+		if isactivation: 
+			filename += "_A"
+		if ismix: 
+			filename += "_Mi"
+		if nonlinsig: 
+			filename += "_sigmoid"
 
 	filename = filename + ".txt"
 	if not os.path.exists(os.path.dirname(filename)):
@@ -217,9 +238,9 @@ def main(model, T, n_iter, n_batch, n_hidden, capacity, comp, FFT, learning_rate
 if __name__=="__main__":
 	parser = argparse.ArgumentParser(
 		description="Copying Task")
-	parser.add_argument("model", default='LSTM', help='Model name: LSTM, LSTSM, LSTRM, LSTUM, EURNN, GRU, GRRU, GORU')
-	parser.add_argument('-T', type=int, default=20, help='Information sequence length')
-	parser.add_argument('--n_iter', '-I', type=int, default=3000, help='training iteration number')
+	parser.add_argument("model", default='LSTM', help='Model name: LSTM, LSTSM, LSTRM, LSTUM, EURNN, GRU, GRRU, GORU, GRRU')
+	parser.add_argument('-T', type=int, default=100, help='Information sequence length')
+	parser.add_argument('--n_iter', '-I', type=int, default=25000, help='training iteration number')
 	parser.add_argument('--n_batch', '-B', type=int, default=128, help='batch size')
 	parser.add_argument('--n_hidden', '-H', type=int, default=128, help='hidden layer size')
 	parser.add_argument('--capacity', '-L', type=int, default=2, help='Tunable style capacity, only for EURNN, default value is 2')
@@ -227,7 +248,11 @@ if __name__=="__main__":
 	parser.add_argument('--FFT', '-F', type=str, default="False", help='FFT style, default is False')
 	parser.add_argument('--learning_rate', '-R', default=0.001, type=str)
 	parser.add_argument('--decay', '-D', default=0.9, type=str)
-	parser.add_argument('--ismatrix', '-IM', default=None, type=str)
+	parser.add_argument('--ismatrix', '-M', default="False", type=str)
+	parser.add_argument('--isactivation', '-A', default="False", type=str)
+	parser.add_argument('--ismix', '-Mi', default="False", type=str)
+	parser.add_argument('--nonlinsig', '-NLS', default="False", type=str)
+	parser.add_argument('--adam', '-Ad', default="False", type=str)
 
 	args = parser.parse_args()
 	dict = vars(args)
@@ -250,6 +275,9 @@ if __name__=="__main__":
 			  	'learning_rate': dict['learning_rate'],
 			  	'decay': dict['decay'],
 			  	'ismatrix': dict['ismatrix'],
+			  	'isactivation': dict['isactivation'], 
+			  	'ismix': dict['ismix'], 
+			  	'nonlinsig': dict['nonlinsig']
 			}
 
 	main(**kwargs)

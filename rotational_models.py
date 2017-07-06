@@ -105,6 +105,7 @@ class GRRUCell(RNNCell):
 
 	def call(self, inputs, state):
 		"""Gated Rotational Recurrent Unit (GRRU)"""
+		tf.clip_by_norm(state, clip_norm=1000.0, axes=[1])
 		with vs.variable_scope("gates"): 
 			bias_ones = self._bias_initializer
 			if self._bias_initializer is None:
