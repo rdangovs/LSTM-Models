@@ -5,6 +5,7 @@ from __future__	import print_function
 import numpy as np
 import argparse, os
 import tensorflow as tf
+import sys
 
 from tensorflow.contrib.rnn import BasicLSTMCell, BasicRNNCell, GRUCell
 from EURNN import EURNNCell
@@ -39,8 +40,9 @@ def copying_data(T, n_data, n_sequence):
 	
 	return x, y
 
-def main(model, T, n_iter, n_batch, n_hidden, capacity, comp, FFT, learning_rate, decay, ismatrix, isactivation, ismix, nonlinsig):
+def main(model, T, n_iter, n_batch, n_hidden, capacity, comp, FFT, learning_rate, decay, ismodrelu, modrelu_const):
 	learning_rate = float(learning_rate)
+	modrelu_const = float(modrelu_const)
 	decay = float(decay)
 
 	# --- Set data params ----------------
@@ -109,11 +111,7 @@ def main(model, T, n_iter, n_batch, n_hidden, capacity, comp, FFT, learning_rate
 		cell = GRUCell(n_hidden)
 		hidden_out, _ = tf.nn.dynamic_rnn(cell, input_data, dtype=tf.float32)
 	elif model == "GRRU":
-		if nonlinsig: 
-			act = sigmoid 
-		else: 
-			act = relu 
-		cell = GRRUCell(n_hidden, size_batch = n_batch, activation = act, isActivation=isactivation, isMix=ismix)
+		cell = GRRUCell(n_hidden, size_batch = n_batch, is_modrelu = ismodrelu, modrelu_const = modrelu_const)
 		hidden_out, _ = tf.nn.dynamic_rnn(cell, input_data, dtype = tf.float32)
 	elif model == "RNN":
 		cell = BasicRNNCell(n_hidden)
@@ -153,7 +151,7 @@ def main(model, T, n_iter, n_batch, n_hidden, capacity, comp, FFT, learning_rate
 		print(i.name)
 
 	# --- save result ----------------------
-	filename = "./output/copying/T=" + str(T) + "/" + model  + "_N=" + str(n_hidden) + "_lambda=" + str(learning_rate) + "_ismatrix=" + str(ismatrix)
+	filename = "./output/copying/T=" + str(T) + "/" + model  + "_N=" + str(n_hidden) + "_lambda=" + str(learning_rate) + "_decay=" + str(decay)
 		
 	if model == "EURNN"  or model == "GORU":
 		print(model)
@@ -164,12 +162,9 @@ def main(model, T, n_iter, n_batch, n_hidden, capacity, comp, FFT, learning_rate
 	
 	if model == "GRRU": 
 		print(model)
-		if isactivation: 
-			filename += "_A"
-		if ismix: 
-			filename += "_Mi"
-		if nonlinsig: 
-			filename += "_sigmoid"
+		if ismodrelu: 
+			filename += "_modrelu_" 
+			filename += str(modrelu_const)
 
 	filename = filename + ".txt"
 	if not os.path.exists(os.path.dirname(filename)):
@@ -191,7 +186,7 @@ def main(model, T, n_iter, n_batch, n_hidden, capacity, comp, FFT, learning_rate
 
 
 	# --- Training Loop ----------------------
-
+	mx2  = 0
 	step = 0
 	with tf.Session(config=tf.ConfigProto(log_device_placement=False, allow_soft_placement=False)) as sess:
 
@@ -200,6 +195,7 @@ def main(model, T, n_iter, n_batch, n_hidden, capacity, comp, FFT, learning_rate
 		steps = []
 		losses = []
 		accs = []
+
 
 		while step < n_iter:
 			batch_x = train_x[step * n_batch : (step+1) * n_batch]
@@ -210,6 +206,11 @@ def main(model, T, n_iter, n_batch, n_hidden, capacity, comp, FFT, learning_rate
 
 			acc = sess.run(accuracy, feed_dict={x: batch_x, y: batch_y})
 			loss = sess.run(cost, feed_dict={x: batch_x, y: batch_y})
+
+			if np.isnan(loss) or loss > 30000.0: 
+					f.write("Encountered a NaN blow up! Fix the model/parameters...\n")
+					print("Sorry, a blow up!")
+					sys.exit()
 
 			print("Iter " + str(step) + ", Minibatch Loss= " + \
 				  "{:.6f}".format(loss) + ", Training Accuracy= " + \
@@ -222,6 +223,23 @@ def main(model, T, n_iter, n_batch, n_hidden, capacity, comp, FFT, learning_rate
 			step += 1
 
 			f.write("%d\t%f\t%f\n"%(step, loss, acc))
+
+
+			## output hidden value
+
+			tmp = sess.run(hidden_out, feed_dict={x: batch_x, y: batch_y})
+			print(tmp.size, tmp.shape)
+			mx = 0
+			for i in range(T):
+				if np.abs(np.average(tmp[0][i])) > mx: 
+					mx = np.abs(np.average(tmp[0][i]))
+			print("Max for iteration: ", mx)
+			if mx > mx2: 
+				mx2 = mx
+			print("Max for whole: ", mx2)
+
+			## 
+
 
 		print("Optimization Finished!")
 
@@ -239,20 +257,17 @@ if __name__=="__main__":
 	parser = argparse.ArgumentParser(
 		description="Copying Task")
 	parser.add_argument("model", default='LSTM', help='Model name: LSTM, LSTSM, LSTRM, LSTUM, EURNN, GRU, GRRU, GORU, GRRU')
-	parser.add_argument('-T', type=int, default=100, help='Information sequence length')
+	parser.add_argument('-T', type=int, default=200, help='Information sequence length')
 	parser.add_argument('--n_iter', '-I', type=int, default=25000, help='training iteration number')
 	parser.add_argument('--n_batch', '-B', type=int, default=128, help='batch size')
-	parser.add_argument('--n_hidden', '-H', type=int, default=128, help='hidden layer size')
+	parser.add_argument('--n_hidden', '-H', type=int, default=100, help='hidden layer size')
 	parser.add_argument('--capacity', '-L', type=int, default=2, help='Tunable style capacity, only for EURNN, default value is 2')
 	parser.add_argument('--comp', '-C', type=str, default="False", help='Complex domain or Real domain. Default is False: real domain')
 	parser.add_argument('--FFT', '-F', type=str, default="False", help='FFT style, default is False')
 	parser.add_argument('--learning_rate', '-R', default=0.001, type=str)
 	parser.add_argument('--decay', '-D', default=0.9, type=str)
-	parser.add_argument('--ismatrix', '-M', default="False", type=str)
-	parser.add_argument('--isactivation', '-A', default="False", type=str)
-	parser.add_argument('--ismix', '-Mi', default="False", type=str)
-	parser.add_argument('--nonlinsig', '-NLS', default="False", type=str)
-	parser.add_argument('--adam', '-Ad', default="False", type=str)
+	parser.add_argument('--ismodrelu', '-A', default="False", type=str)
+	parser.add_argument('--modrelu_const', '-Co', default=0.0, type=str)	
 
 	args = parser.parse_args()
 	dict = vars(args)
@@ -274,10 +289,8 @@ if __name__=="__main__":
 			  	'FFT': dict['FFT'],
 			  	'learning_rate': dict['learning_rate'],
 			  	'decay': dict['decay'],
-			  	'ismatrix': dict['ismatrix'],
-			  	'isactivation': dict['isactivation'], 
-			  	'ismix': dict['ismix'], 
-			  	'nonlinsig': dict['nonlinsig']
+			  	'ismodrelu': dict['ismodrelu'],
+			  	'modrelu_const': dict['modrelu_const']
 			}
 
 	main(**kwargs)

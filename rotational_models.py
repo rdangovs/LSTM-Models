@@ -32,6 +32,7 @@ tanh = math_ops.tanh
 matm = math_ops.matmul
 mul = math_ops.multiply 
 relu = nn_ops.relu
+sign = math_ops.sign
 
 def _rotation(x, 
 			  y, 
@@ -74,6 +75,9 @@ def _rotation(x,
 		   tf.matmul(step5, tf.transpose(step5, [0,2,1])) - 
 		   tf.matmul(tf.matmul(tf.transpose(step3, [0,2,1]), Rth), step3))
 
+def _modReLU(x, bias):
+	return relu(math_ops.abs(x) + tf.constant(0.00001) + bias) * sign(x)
+
 class GRRUCell(RNNCell):
 	"""Gated Rotational Recurrent Unit cell."""
 
@@ -83,17 +87,20 @@ class GRRUCell(RNNCell):
 			     activation = None,
     			 reuse = None,
     			 kernel_initializer = None,
-    		     bias_initializer = None,
-    		     isActivation = False,
-    		     isMix = False):
+    		     bias_initializer = None, 
+    		     is_modrelu = False, 
+    		     modrelu_const = 0.0,
+    		     is_lin = False
+    		     ):
 		super(GRRUCell, self).__init__(_reuse = reuse)
 		self._hidden_size = hidden_size
 		self._size_batch = size_batch
 		self._activation = activation or relu
 		self._kernel_initializer = kernel_initializer
 		self._bias_initializer = bias_initializer
-		self._isActivation = isActivation 
-		self._isMix = isMix 
+		self._is_modrelu = is_modrelu 
+		self._modrelu_const = modrelu_const
+		self._is_lin = is_lin
 
 	@property
 	def state_size(self):
@@ -105,7 +112,7 @@ class GRRUCell(RNNCell):
 
 	def call(self, inputs, state):
 		"""Gated Rotational Recurrent Unit (GRRU)"""
-		tf.clip_by_norm(state, clip_norm=1000.0, axes=[1])
+		#tf.clip_by_norm(state, clip_norm = 1.5, axes = [1])
 		with vs.variable_scope("gates"): 
 			bias_ones = self._bias_initializer
 			if self._bias_initializer is None:
@@ -117,30 +124,32 @@ class GRRUCell(RNNCell):
 			r, u = array_ops.split(value = value, num_or_size_splits = 2, axis = 1)
 		with vs.variable_scope("candidate"):
 			#We get the rotation between the mixed x and r, which acts on the mixed h
-			if self._isMix: 
+			if self._is_lin: 
 				x_mixed, h_mixed = array_ops.split(value = _linear([inputs, state], 2 * self._hidden_size, 
-																   True, self._bias_initializer, self._kernel_initializer),
+																	True, self._bias_initializer, self._kernel_initializer),
 												   num_or_size_splits = 2, axis = 1) 
-			else:
-				x_mixed = _linear(inputs, self._hidden_size, True, self._bias_initializer, self._kernel_initializer)
-			
+				x_mixed = tf.identity(x_mixed, "x_mixed")
+				h_mixed = tf.identity(h_mixed, "h_mixed")
+			#else: 			
+			#	x_mixed = _linear(inputs, self._hidden_size, True, self._bias_initializer, self._kernel_initializer)
 			U  = _rotation(x_mixed, r, self._size_batch, self._hidden_size)
 
-			if self._isActivation: 
-				if self._isMix: 
-					c  = self._activation(x_mixed + self._activation(tf.reshape(tf.matmul(U, tf.reshape(h_mixed, 
-							[self._size_batch, self._hidden_size, 1])), [self._size_batch, self._hidden_size])))
-				else: 
-					c =  self._activation(x_mixed + self._activation(tf.reshape(tf.matmul(U, tf.reshape(state, 
-							[self._size_batch, self._hidden_size, 1])), [self._size_batch, self._hidden_size])))
+			if self._is_modrelu: 
+				bias_c = vs.get_variable("bias_c", [self._size_batch, self._hidden_size], 
+					                     dtype = tf.float32, initializer = init_ops.constant_initializer(self._modrelu_const)) 
+				if self._is_lin:
+					c = _modReLU(x_mixed + tf.reshape(tf.matmul(U, tf.reshape(h_mixed, 
+								[self._size_batch, self._hidden_size, 1])), [self._size_batch, self._hidden_size]), bias_c)			
+				#else:
+				#	c = _modReLU(x_mixed + tf.reshape(tf.matmul(U, tf.reshape(state, 
+				#				[self._size_batch, self._hidden_size, 1])), [self._size_batch, self._hidden_size]), bias_c)			
 			else:
-				if self._isMix:
+				if self._is_lin:
 					c = self._activation(x_mixed + tf.reshape(tf.matmul(U, tf.reshape(h_mixed, 
-							[self._size_batch, self._hidden_size, 1])), [self._size_batch, self._hidden_size]))
-				else: 
-					c = self._activation(x_mixed + tf.reshape(tf.matmul(U, tf.reshape(state, 
-							[self._size_batch, self._hidden_size, 1])), [self._size_batch, self._hidden_size]))
-			
+									[self._size_batch, self._hidden_size, 1])), [self._size_batch, self._hidden_size]))			
+				#else: 
+				#	c = self._activation(x_mixed + tf.reshape(tf.matmul(U, tf.reshape(state, 
+				#					[self._size_batch, self._hidden_size, 1])), [self._size_batch, self._hidden_size]))			
 		new_h = u * state + (1 - u) * c
 		return new_h, new_h
 

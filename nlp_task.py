@@ -6,6 +6,8 @@ import numpy as np
 import argparse, os
 import tensorflow as tf
 from tensorflow.python.ops import init_ops
+from tensorflow.python.ops import math_ops
+from tensorflow.python.ops import nn_ops
 from tensorflow.contrib.rnn import BasicLSTMCell, BasicRNNCell, GRUCell
 from EURNN import EURNNCell
 from GORU import GORUCell
@@ -13,9 +15,17 @@ from rotational_models import GRRUCell, BasicLSTRMCell
 
 from ptb_iterator import *
 import re
+import sys
 
 word_level = False
 notstates = False
+
+sigmoid = math_ops.sigmoid 
+tanh = math_ops.tanh
+matm = math_ops.matmul
+mul = math_ops.multiply 
+relu = nn_ops.relu
+sign = math_ops.sign
 
 def file_data(stage, n_batch, n_data, T, n_epochs, vocab_to_idx,readIntegers=True):
 
@@ -78,8 +88,14 @@ def file_data(stage, n_batch, n_data, T, n_epochs, vocab_to_idx,readIntegers=Tru
 
 # file_data('train', 20, 10000000, 50, 20)
 
-def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT, learning_rate, decay, isactivation, ismix):
+def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT, learning_rate, decay, ismodrelu, modrelu_const, istanh, islin):
 	# --- Set data params ----------------
+	
+	## makes the modReLU negative
+	modrelu_const *= -1 
+	#
+
+
 	#Create Data
 	max_len_data = 1000000000
 	epoch_train, vocab_to_idx = file_data('train', n_batch, max_len_data, T, n_epochs, None)
@@ -119,7 +135,7 @@ def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT, learning_ra
 			h = cell.zero_state(n_batch,tf.float32)
 		hidden_out, states = tf.nn.dynamic_rnn(cell, input_data, dtype=tf.float32)
 	elif model == "GRRU":
-		cell = GRRUCell(n_hidden, size_batch = n_batch, isActivation=isactivation, isMix=ismix)
+		cell = GRRUCell(n_hidden, size_batch = n_batch, is_modrelu = ismodrelu, modrelu_const = modrelu_const, is_lin = islin)
 		if h == None:
 			h = cell.zero_state(n_batch,tf.float32)
 		hidden_out, states = tf.nn.dynamic_rnn(cell, input_data, dtype=tf.float32)
@@ -157,6 +173,8 @@ def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT, learning_ra
 	V_bias = tf.get_variable("V_bias", shape=[n_output], \
 			dtype=tf.float32, initializer=tf.constant_initializer(0.01))
 
+	if istanh: 
+		hidden_out = tanh(hidden_out)
 	hidden_out_list = tf.unstack(hidden_out, axis=1)
 	temp_out = tf.stack([tf.matmul(i, V_weights) for i in hidden_out_list])
 	output_data = tf.nn.bias_add(tf.transpose(temp_out, [1,0,2]), V_bias) 
@@ -172,12 +190,22 @@ def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT, learning_ra
 	optimizer = tf.train.RMSPropOptimizer(learning_rate=learning_rate, decay=decay).minimize(cost)
 	init = tf.global_variables_initializer()
 
+	print("\n###")
+	sum = 0 
 	for i in tf.global_variables():
-		print(i.name)
+		#print(i.name)
+		print(i.name, i.shape, np.prod(np.array(i.get_shape().as_list())))
+		sum += np.prod(np.array(i.get_shape().as_list()))
+	print("# parameters: ", sum)
+	print("###\n")
+	input()
 
 	# --- save result ----------------------
-	filename = "./output/character/T=" + str(T) + "/" + model  + "_N=" + str(n_hidden)# + "_lambda=" + str(learning_rate) + "_beta=" + str(decay)
-		
+	filename = "./output/character/T=" + str(T) + "/" + model  + "_N=" + str(n_hidden) + "_lambda=" + str(learning_rate) + "_beta=" + str(decay)
+	
+	if istanh: 
+		print("Tanh!")
+		filename += "_tanh"
 	if model == "EURNN"  or model == "GORU":
 		print(model)
 		if FFT:
@@ -186,10 +214,12 @@ def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT, learning_ra
 			filename = filename + "_L=" + str(capacity)
 	if model == "GRRU": 
 		print(model)
-		if isactivation: 
-			filename += "_A"
-		if ismix: 
-			filename += "_Mi"
+		if ismodrelu: 
+			filename += "_modrelu_" 
+			filename += str(modrelu_const)
+		if islin: 
+			filename += "_lin"
+
 	filename = filename + ".txt"
 	if not os.path.exists(os.path.dirname(filename)):
 		try:
@@ -231,7 +261,7 @@ def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT, learning_ra
 
 
 
-	def do_validation():
+	def do_validation(m1, m2):
 		j = 0
 		val_losses = []
 		for val in epoch_val:
@@ -257,7 +287,7 @@ def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT, learning_ra
 		print("Validation Loss= " + \
 				  "{:.6f}".format(validation_losses[-1]))
 		
-		f.write("%d\t%f\n"%(t, validation_losses[-1]))
+		f.write("%d\t%f\t%f\t%f\n"%(t, validation_losses[-1], m1, m2))
 		f.flush()
 
 	# saver = tf.train.Saver()
@@ -284,6 +314,7 @@ def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT, learning_ra
 		training_state = None
 		i = 0
 		t = 0
+		mx2 = 0
 		for epoch in epoch_train:
 			print("Epoch: " , i)
 
@@ -318,9 +349,27 @@ def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT, learning_ra
 				accs.append(acc)
 				t += 1
 
+				if np.isnan(loss) or loss > 30000.0: 
+					f.write("Encountered a NaN blow up! Fix the model/parameters...\n")
+					f.write("The maximal norms: " + str(mx2) + " " + str(mx) + "\n")
+					print("Sorry, a blow up!")
+					sys.exit()
+
+				## output hidden value
+				tmp = sess.run(hidden_out, feed_dict={x: batch_x, y: batch_y})
+				print(tmp.size, tmp.shape)
+				mx = 0
+				for i in range(T):
+					if np.abs(np.average(tmp[0][i])) > mx: 
+						mx = np.abs(np.average(tmp[0][i]))
+				print("Max for iteration: ", mx)
+				if mx > mx2: 
+					mx2 = mx
+				print("Max for whole: ", mx2)
+				## 
 
 				if step % 1000 == 999:
-					do_validation()
+					do_validation(mx, mx2)
 					# saver.save(sess,savename)
 					#Now I need to take an epoch and go through it. I will average the losses at the end
 						# f2.write("%d\t%f\t%f\n"%(step, loss, acc))
@@ -328,7 +377,6 @@ def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT, learning_ra
 					# f2.flush()
 				# mystates = sess.run(states, feed_dict=myfeed_dict)
 				# print ("States",training_state)
-
 			i += 1
 
 		print("Optimization Finished!")
@@ -358,6 +406,7 @@ def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT, learning_ra
 		print("test Loss= " + \
 				  "{:.6f}".format(test_losses[-1]))
 		f.write("Test result: %d\t%f\n"%(t, test_losses[-1]))
+		f.write("The maximal norms: " + str(mx2) + " " + str(mx) + "\n")
 
 		
 
@@ -376,10 +425,10 @@ if __name__=="__main__":
 	parser.add_argument('--FFT', '-F', type=str, default="False", help='FFT style, default is False')
 	parser.add_argument('--learning_rate', '-R', default=0.001, type=float)
 	parser.add_argument('--decay', '-D', default=0.9, type=float)
-	parser.add_argument('--isactivation', '-A', default="False", type=str)
-	parser.add_argument('--ismix', '-Mi', default="False", type=str)
-	
-
+	parser.add_argument('--ismodrelu', '-Mo', default="False", type=str)
+	parser.add_argument('--modrelu_const', '-Co', default=0.0, type=float)	
+	parser.add_argument('--istanh', '-Ta', default="False", type=str)	
+	parser.add_argument('--islin', '-Li', default="False", type=str)	
 	# parser.add_argument("--model_save_to", type=str, default="my-model", help='Name to save the file to')
 	# parser.add_argument("--model_load_from", type=str, default="", help='Name to load the model from')
 	# parser.add_argument("--num_layers", type=int, default=1, help='Int: Number of layers (1)')
@@ -406,8 +455,10 @@ if __name__=="__main__":
 			  	'FFT': dict['FFT'],
 			  	'learning_rate': dict['learning_rate'],
 			  	'decay': dict['decay'],
-			  	'isactivation': dict['isactivation'], 
-			  	'ismix': dict['ismix']
+			  	'ismodrelu': dict['ismodrelu'],
+			  	'modrelu_const': dict['modrelu_const'],
+			  	'istanh': dict['istanh'],
+			  	'islin': dict['islin']
 			}
 	print(kwargs)
 	main(**kwargs)
