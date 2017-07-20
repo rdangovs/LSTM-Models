@@ -12,6 +12,7 @@ from tensorflow.contrib.rnn import BasicLSTMCell, BasicRNNCell, GRUCell
 from EURNN import EURNNCell
 from GORU import GORUCell
 from rotational_models import GRRUCell, BasicLSTRMCell
+from supercell_DRUM import HyperLSTMCell, HyperDRUMCell
 
 from ptb_iterator import *
 import re
@@ -88,7 +89,10 @@ def file_data(stage, n_batch, n_data, T, n_epochs, vocab_to_idx,readIntegers=Tru
 
 # file_data('train', 20, 10000000, 50, 20)
 
-def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT, learning_rate, decay, ismodrelu, modrelu_const, istanh, islin):
+def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT, 
+		 learning_rate, decay, ismodrelu, modrelu_const, istanh, 
+		 learning_rate_decay, piecewise_rate_decay, memory, optimization,
+		 isclipping, model_save_to, isdropout, dropout_keep_prob):
 	# --- Set data params ----------------
 	
 	## makes the modReLU negative
@@ -135,8 +139,20 @@ def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT, learning_ra
 			h = cell.zero_state(n_batch,tf.float32)
 		hidden_out, states = tf.nn.dynamic_rnn(cell, input_data, dtype=tf.float32)
 	elif model == "GRRU":
-		cell = GRRUCell(n_hidden, size_batch = n_batch, is_modrelu = ismodrelu, modrelu_const = modrelu_const, is_lin = islin)
+		cell = GRRUCell(n_hidden, size_batch = n_batch, is_modrelu = ismodrelu, modrelu_const = modrelu_const)
 		if h == None:
+			h = cell.zero_state(n_batch,tf.float32)
+		hidden_out, states = tf.nn.dynamic_rnn(cell, input_data, dtype=tf.float32)
+	elif model == "HyperLSTM": 
+		#print(HyperLSTMCell, type(HyperLSTMCell))
+		#input()
+		cell = HyperLSTMCell(n_hidden)
+		if h == None: 
+			h = cell.zero_state(n_batch,tf.float32)
+		hidden_out, states = tf.nn.dynamic_rnn(cell, input_data, dtype=tf.float32)
+	elif model == "HyperDRUM": 
+		cell = HyperDRUMCell(n_hidden)
+		if h == None: 
 			h = cell.zero_state(n_batch,tf.float32)
 		hidden_out, states = tf.nn.dynamic_rnn(cell, input_data, dtype=tf.float32)
 	elif model == "RNN":
@@ -178,7 +194,9 @@ def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT, learning_ra
 	hidden_out_list = tf.unstack(hidden_out, axis=1)
 	temp_out = tf.stack([tf.matmul(i, V_weights) for i in hidden_out_list])
 	output_data = tf.nn.bias_add(tf.transpose(temp_out, [1,0,2]), V_bias) 
-
+	if isdropout: 
+		output_data = tf.nn.dropout(output_data, dropout_keep_prob)
+		
 
 	# define evaluate process
 	cost = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=output_data, labels=y))
@@ -187,25 +205,56 @@ def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT, learning_ra
 
 
 	# --- Initialization ----------------------
-	optimizer = tf.train.RMSPropOptimizer(learning_rate=learning_rate, decay=decay).minimize(cost)
-	init = tf.global_variables_initializer()
 
+	##
+	if learning_rate_decay:
+		global_step = tf.Variable(0, trainable = False)
+		starter_learning_rate = learning_rate
+		learning_rate_final = tf.train.exponential_decay(starter_learning_rate, global_step,
+    		                                       10000, 0.7, staircase = True)
+	elif piecewise_rate_decay:
+		global_step = tf.Variable(0, trainable = False)
+		boundaries = [3000, 70000]
+		values = [0.01, 0.001, 0.0001]
+		learning_rate_final = tf.train.piecewise_constant(global_step, boundaries, values)
+	else:
+		learning_rate_final = learning_rate
+	##
+
+	if optimization == "RMSProp":
+		optimizer = tf.train.RMSPropOptimizer(learning_rate=learning_rate_final, decay=decay).minimize(cost)
+	elif optimization == "Momentum": 
+		optimizer = tf.train.MomentumOptimizer(learning_rate=learning_rate_final, momentum=decay).minimize(cost)
+	elif optimization == "Adam": 
+		optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate_final).minimize(cost)
+	init = tf.global_variables_initializer()
+	
 	print("\n###")
-	sum = 0 
+	sumz = 0 
 	for i in tf.global_variables():
 		#print(i.name)
 		print(i.name, i.shape, np.prod(np.array(i.get_shape().as_list())))
-		sum += np.prod(np.array(i.get_shape().as_list()))
-	print("# parameters: ", sum)
+		sumz += np.prod(np.array(i.get_shape().as_list()))
+	print("# parameters: ", sumz)
 	print("###\n")
-	input()
+	## input()
 
 	# --- save result ----------------------
-	filename = "./output/character/T=" + str(T) + "/" + model  + "_N=" + str(n_hidden) + "_lambda=" + str(learning_rate) + "_beta=" + str(decay)
+	filename = "./output/character/T=" + str(T) + "/" + model  + "_N=" + str(n_hidden) + "_lambda=" + str(learning_rate) + "_E=" + str(n_epochs) #"_beta=" + str(decay)
 	
 	if istanh: 
 		print("Tanh!")
 		filename += "_tanh"
+	if isdropout: 
+		print("Dropout!")
+		filename += "_dropout"
+	if learning_rate_decay: 
+		print("Learning rate decay!")
+		filename += "_lrd"
+	if piecewise_rate_decay: 
+		print("Piecewise rate decay!")
+		filename += "_prd"
+	
 	if model == "EURNN"  or model == "GORU":
 		print(model)
 		if FFT:
@@ -217,8 +266,6 @@ def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT, learning_ra
 		if ismodrelu: 
 			filename += "_modrelu_" 
 			filename += str(modrelu_const)
-		if islin: 
-			filename += "_lin"
 
 	filename = filename + ".txt"
 	if not os.path.exists(os.path.dirname(filename)):
@@ -246,24 +293,25 @@ def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT, learning_ra
 	# --- Training Loop ---------------------------------------------------------------
 
 
-	# if saveTo == "my-model":
-	# 	print("Autogenerating the save name")
-	# 	saveTo = "nlp_"+str(model)+"_"+str(n_hidden)+"_"+str(capacity)+"_"+str(approx)+"_"+str(num_layers)
-	# 	print("Save name is: " , saveTo)
-	# 	savename="./output/nlp/"+str(saveTo)
+	if model_save_to == "my-model":
+		print("Autogenerating the save name")
+		model_save_to = "nlp_"+str(model)+"_"+str(n_hidden)+str(istanh)
+		print("Save name is: " , model_save_to)
+		savename="./output/nlp/"+str(model_save_to)
 
-	# 	if not os.path.exists(os.path.dirname(savename)):
-	# 		try:
-	# 			os.makedirs(os.path.dirname(savename))
-	# 		except OSError as exc: # Guard against race condition
-	# 			if exc.errno != errno.EEXIST:
-	# 				raise
+		if not os.path.exists(os.path.dirname(savename)):
+			try:
+				os.makedirs(os.path.dirname(savename))
+			except OSError as exc: # Guard against race condition
+				if exc.errno != errno.EEXIST:
+					raise
 
 
 
 	def do_validation(m1, m2):
 		j = 0
 		val_losses = []
+		val_accuracies = [] 
 		for val in epoch_val:
 			j +=1 
 			if j >= 2:
@@ -282,18 +330,26 @@ def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT, learning_ra
 				else:
 					val_acc, val_loss, val_state = sess.run([accuracy, cost,states],feed_dict=val_dict)
 				val_losses.append(val_loss)
+				val_accuracies.append(val_acc)
 		print("Validations:", )
 		validation_losses.append(sum(val_losses)/len(val_losses))
+		validation_accuracies.append(sum(val_accuracies)/len(val_accuracies))
 		print("Validation Loss= " + \
-				  "{:.6f}".format(validation_losses[-1]))
-		
-		f.write("%d\t%f\t%f\t%f\n"%(t, validation_losses[-1], m1, m2))
+					  "{:.6f}".format(validation_losses[-1]) + 
+					  ", Validation Accuracy= " + \
+				  	  "{:.5f}".format(validation_accuracies[-1]))
+
+		f.write("%d\t%f\t%f\t%f\t%f\n"%(t, validation_losses[-1], 
+				validation_accuracies[-1], m1, m2))
 		f.flush()
 
-	# saver = tf.train.Saver()
+	saver = tf.train.Saver()
 
 	step = 0
-	with tf.Session(config=tf.ConfigProto(log_device_placement=False, allow_soft_placement=False)) as sess:
+	gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction = memory)
+	with tf.Session(config = tf.ConfigProto(log_device_placement = False, 
+										    allow_soft_placement = False,
+										    gpu_options = gpu_options)) as sess:
 		print("Session Created")
 
 		# if loadFrom != "":
@@ -309,6 +365,7 @@ def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT, learning_ra
 		losses = []
 		accs = []
 		validation_losses = []
+		validation_accuracies = [] 
 
 		sess.run(init)
 		training_state = None
@@ -349,12 +406,6 @@ def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT, learning_ra
 				accs.append(acc)
 				t += 1
 
-				if np.isnan(loss) or loss > 30000.0: 
-					f.write("Encountered a NaN blow up! Fix the model/parameters...\n")
-					f.write("The maximal norms: " + str(mx2) + " " + str(mx) + "\n")
-					print("Sorry, a blow up!")
-					sys.exit()
-
 				## output hidden value
 				tmp = sess.run(hidden_out, feed_dict={x: batch_x, y: batch_y})
 				print(tmp.size, tmp.shape)
@@ -368,9 +419,16 @@ def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT, learning_ra
 				print("Max for whole: ", mx2)
 				## 
 
-				if step % 1000 == 999:
+				if np.isnan(loss) or loss > 30000.0: 
+					f.write("Encountered a NaN blow up! Fix the model/parameters...\n")
+					f.write("The maximal norms: " + str(mx2) + " " + str(mx) + "\n")
+					print("Sorry, a blow up!")
+					sys.exit()
+
+				#finer validation!!
+				if step % 60 == 59:
 					do_validation(mx, mx2)
-					# saver.save(sess,savename)
+					saver.save(sess,savename)
 					#Now I need to take an epoch and go through it. I will average the losses at the end
 						# f2.write("%d\t%f\t%f\n"%(step, loss, acc))
 					# f.flush()
@@ -386,6 +444,7 @@ def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT, learning_ra
 
 		j = 0
 		test_losses = []
+		test_accuracies = []
 		for test in epoch_test:
 			j +=1 
 			if j >= 2:
@@ -401,11 +460,13 @@ def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT, learning_ra
 					# test_dict[h] = test_state
 				test_acc, test_loss = sess.run([accuracy, cost],feed_dict=test_dict)
 				test_losses.append(test_loss)
+				test_accuracies.append(test_acc)
 		print("test:", )
 		test_losses.append(sum(test_losses)/len(test_losses))
+		test_accuracies.append(sum(test_accuracies)/len(test_accuracies))
 		print("test Loss= " + \
 				  "{:.6f}".format(test_losses[-1]))
-		f.write("Test result: %d\t%f\n"%(t, test_losses[-1]))
+		f.write("Test result: %d\t%f\t%f\n"%(t, test_losses[-1], test_accuracies[-1]))
 		f.write("The maximal norms: " + str(mx2) + " " + str(mx) + "\n")
 
 		
@@ -415,11 +476,11 @@ if __name__=="__main__":
 	parser = argparse.ArgumentParser(
 		description="Copying Memory Problem")
 
-	parser.add_argument("model", default='LSTM', help='Model name: LSTM, EURNN, GRU, GORU')
+	parser.add_argument("model", default='LSTM', help='Model name: LSTM, EURNN, GRU, GORU, GRRU, LSTRM, LSTUM, HyperLSTM, HyperDRUM')
 	parser.add_argument('-T', type=int, default=50, help='T-gram')
 	parser.add_argument("--n_epochs", '-E', type=int, default=20, help='num epochs')
 	parser.add_argument('--n_batch', '-B', type=int, default=32, help='batch size')
-	parser.add_argument('--n_hidden', '-H', type=int, default=512, help='hidden layer size')
+	parser.add_argument('--n_hidden', '-H', type=int, default=32, help='hidden layer size')
 	parser.add_argument('--capacity', '-L', type=int, default=2, help='Tunable style capacity, only for EURNN, default value is 2')
 	parser.add_argument('--comp', '-C', type=str, default="False", help='Complex domain or Real domain. Default is False: real domain')
 	parser.add_argument('--FFT', '-F', type=str, default="False", help='FFT style, default is False')
@@ -427,10 +488,17 @@ if __name__=="__main__":
 	parser.add_argument('--decay', '-D', default=0.9, type=float)
 	parser.add_argument('--ismodrelu', '-Mo', default="False", type=str)
 	parser.add_argument('--modrelu_const', '-Co', default=0.0, type=float)	
-	parser.add_argument('--istanh', '-Ta', default="False", type=str)	
-	parser.add_argument('--islin', '-Li', default="False", type=str)	
-	# parser.add_argument("--model_save_to", type=str, default="my-model", help='Name to save the file to')
-	# parser.add_argument("--model_load_from", type=str, default="", help='Name to load the model from')
+	parser.add_argument('--istanh', '-Ta', default="False", type=str)
+	parser.add_argument('--learning_rate_decay', '-RD', default="False", type=str)
+	parser.add_argument('--piecewise_rate_decay', '-RDP', default="False", type=str)
+	parser.add_argument('--memory', '-Me', default=0.45, type=float)
+	parser.add_argument('--optimization', '-Op', default="RMSProp", type=str, help='Optimization name: RMSProp, Momentum, Adam')
+	parser.add_argument('--isclipping', '-Cl', default="False", type=str)
+	parser.add_argument("--model_save_to", type=str, default="my-model", help='Name to save the file to')
+	parser.add_argument("--isdropout", '-iD', type=str, default="False", help='Whether to apply dropout to input and output')
+	parser.add_argument("--dropout_keep_prob", '-DrP', type=float, default=0.9, help='What dropout to apply')
+
+	#parser.add_argument("--model_load_from", type=str, default="", help='Name to load the model from')
 	# parser.add_argument("--num_layers", type=int, default=1, help='Int: Number of layers (1)')
 
 
@@ -458,7 +526,14 @@ if __name__=="__main__":
 			  	'ismodrelu': dict['ismodrelu'],
 			  	'modrelu_const': dict['modrelu_const'],
 			  	'istanh': dict['istanh'],
-			  	'islin': dict['islin']
+			  	'learning_rate_decay': dict['learning_rate_decay'],
+			  	'piecewise_rate_decay': dict['piecewise_rate_decay'],
+			  	'memory': dict['memory'],
+			  	'optimization': dict['optimization'],
+			  	'isclipping': dict['isclipping'],
+			  	'model_save_to': dict['model_save_to'],
+			  	'isdropout': dict['isdropout'],
+			  	'dropout_keep_prob': dict['dropout_keep_prob']
 			}
 	print(kwargs)
 	main(**kwargs)

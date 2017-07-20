@@ -40,9 +40,14 @@ def copying_data(T, n_data, n_sequence):
 	
 	return x, y
 
-def main(model, T, n_iter, n_batch, n_hidden, capacity, comp, FFT, learning_rate, decay, ismodrelu, modrelu_const):
+def main(model, T, n_iter, n_batch, n_hidden, capacity, comp, FFT, learning_rate, decay,  
+	     ismodrelu, modrelu_const, istanh, learning_rate_decay):
 	learning_rate = float(learning_rate)
-	modrelu_const = float(modrelu_const)
+	
+	## makes the modReLU negative
+	modrelu_const *= -1 
+	#
+
 	decay = float(decay)
 
 	# --- Set data params ----------------
@@ -128,6 +133,10 @@ def main(model, T, n_iter, n_batch, n_hidden, capacity, comp, FFT, learning_rate
 		hidden_out, _ = tf.nn.dynamic_rnn(cell, input_data, dtype=tf.float32)
 
 	# --- Hidden Layer to Output ----------------------
+	# important `tanh` prevention from blow up 
+	if istanh: 
+		hidden_out = tanh(hidden_out)
+
 	V_init_val = np.sqrt(6.)/np.sqrt(n_output + n_input)
 
 	V_weights = tf.get_variable("V_weights", shape = [n_hidden, n_classes], dtype=tf.float32, initializer=tf.random_uniform_initializer(-V_init_val, V_init_val))
@@ -144,15 +153,38 @@ def main(model, T, n_iter, n_batch, n_hidden, capacity, comp, FFT, learning_rate
 
 
 	# --- Initialization ----------------------
+	##
+	if learning_rate_decay:
+		global_step = tf.Variable(0, trainable = False)
+		starter_learning_rate = learning_rate
+		learning_rate_final = tf.train.exponential_decay(starter_learning_rate, global_step,
+    		                                       10000, 0.7, staircase = True)
+	else: 
+		learning_rate_final = learning_rate
+	##
+
 	optimizer = tf.train.RMSPropOptimizer(learning_rate=learning_rate, decay=decay).minimize(cost)
 	init = tf.global_variables_initializer()
 
+	print("\n###")
+	sumz = 0 
 	for i in tf.global_variables():
-		print(i.name)
+		#print(i.name)
+		print(i.name, i.shape, np.prod(np.array(i.get_shape().as_list())))
+		sumz += np.prod(np.array(i.get_shape().as_list()))
+	print("# parameters: ", sumz)
+	print("###\n")
+	#input()
 
 	# --- save result ----------------------
 	filename = "./output/copying/T=" + str(T) + "/" + model  + "_N=" + str(n_hidden) + "_lambda=" + str(learning_rate) + "_decay=" + str(decay)
-		
+	
+	if istanh: 
+		print("Tanh!")
+		filename += "_tanh"
+	if learning_rate_decay: 
+		print("Learning rate decay!")
+		filename += "_lrd"
 	if model == "EURNN"  or model == "GORU":
 		print(model)
 		if FFT:
@@ -188,8 +220,10 @@ def main(model, T, n_iter, n_batch, n_hidden, capacity, comp, FFT, learning_rate
 	# --- Training Loop ----------------------
 	mx2  = 0
 	step = 0
-	with tf.Session(config=tf.ConfigProto(log_device_placement=False, allow_soft_placement=False)) as sess:
-
+	gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction = 0.10)
+	with tf.Session(config = tf.ConfigProto(log_device_placement = False, 
+										    allow_soft_placement = False,
+										    gpu_options = gpu_options)) as sess:
 		sess.run(init)
 
 		steps = []
@@ -258,7 +292,7 @@ if __name__=="__main__":
 		description="Copying Task")
 	parser.add_argument("model", default='LSTM', help='Model name: LSTM, LSTSM, LSTRM, LSTUM, EURNN, GRU, GRRU, GORU, GRRU')
 	parser.add_argument('-T', type=int, default=200, help='Information sequence length')
-	parser.add_argument('--n_iter', '-I', type=int, default=25000, help='training iteration number')
+	parser.add_argument('--n_iter', '-I', type=int, default=20000, help='training iteration number')
 	parser.add_argument('--n_batch', '-B', type=int, default=128, help='batch size')
 	parser.add_argument('--n_hidden', '-H', type=int, default=100, help='hidden layer size')
 	parser.add_argument('--capacity', '-L', type=int, default=2, help='Tunable style capacity, only for EURNN, default value is 2')
@@ -266,9 +300,11 @@ if __name__=="__main__":
 	parser.add_argument('--FFT', '-F', type=str, default="False", help='FFT style, default is False')
 	parser.add_argument('--learning_rate', '-R', default=0.001, type=str)
 	parser.add_argument('--decay', '-D', default=0.9, type=str)
-	parser.add_argument('--ismodrelu', '-A', default="False", type=str)
-	parser.add_argument('--modrelu_const', '-Co', default=0.0, type=str)	
-
+	parser.add_argument('--ismodrelu', '-Mo', default="False", type=str)
+	parser.add_argument('--modrelu_const', '-Co', default=0.0, type=float)	
+	parser.add_argument('--istanh', '-Ta', default="False", type=str)	
+	parser.add_argument('--learning_rate_decay', '-RD', default="False", type=str)	
+	
 	args = parser.parse_args()
 	dict = vars(args)
 
@@ -290,7 +326,9 @@ if __name__=="__main__":
 			  	'learning_rate': dict['learning_rate'],
 			  	'decay': dict['decay'],
 			  	'ismodrelu': dict['ismodrelu'],
-			  	'modrelu_const': dict['modrelu_const']
+			  	'modrelu_const': dict['modrelu_const'],
+			  	'istanh': dict['istanh'],
+			  	'learning_rate_decay': dict['learning_rate_decay']
 			}
 
 	main(**kwargs)

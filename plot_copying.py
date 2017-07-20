@@ -18,8 +18,7 @@ bpc = False
 goru128 = "/GORU_N=128_L=2.txt"
 gru256 = "/GRU_N=256.txt"
 lstm256 = "/LSTM_N=256.txt"
-grru100 = "/GRRU_100_Mi.txt"
-grru100_new = "/GRRU_100_Mi_new.txt"
+grru126 = "/GRRU_N=126_lambda=0.001_decay=0.9.txt"
 
 
 main_dir = main_dir_character + dir_task_character + T
@@ -76,7 +75,7 @@ if bpc:
 else: 
 	lstm_256, = plt.plot(iters, result, label=r"LSTM 256")
 
-f = open(main_dir + grru100, "r")
+f = open(main_dir + grru126, "r")
 lines = f.readlines()
 result = [] 
 iters =[]
@@ -89,32 +88,15 @@ for x in lines[6:-1]:
 	result.append(float(a[1]))
 f.close()
 if bpc: 
-	grru_100, = plt.plot(iters, np.array(result)/np.log(2), label=r"GRRU 100")
+	grru_126, = plt.plot(iters, np.array(result)/np.log(2), label=r"DRUM 126")
 else: 
-	grru_100, = plt.plot(iters, result, label=r"GRRU 100")
+	grru_126, = plt.plot(iters, result, label=r"DRUM 126")
 
-f = open(main_dir + grru100_new, "r")
-lines = f.readlines()
-result = [] 
-iters =[]
-for x in lines[6:-1]:
-	x = x.rstrip()
-	a = x.split("\t")
-	if float(a[1]) > 1000.0: 
-		break
-	iters.append(int(a[0]))
-	result.append(float(a[1]))
-f.close()
-if bpc: 
-	grru_100_new, = plt.plot(iters, np.array(result)/np.log(2), label=r"GRRU 100 w. clip.")
-else: 
-	grru_100_new, = plt.plot(iters, result, label=r"GRRU 100 w. clip.")
-
-plt.legend(handles = [goru_128, gru_256, lstm_256, grru_100, grru_100_new])
+plt.legend(handles = [goru_128, gru_256, lstm_256, grru_126])
 axes = plt.gca()
 axes.set_ylim([0.00,0.40])
-
-plt.show()
+plt.savefig("./plots/DRUM_copying.pdf", transparent = True, format = 'pdf')
+# # plt.show()
 
 
 

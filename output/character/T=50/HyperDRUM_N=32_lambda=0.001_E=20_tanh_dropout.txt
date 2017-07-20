@@ -1,0 +1,8 @@
+########
+
+## 	Model: HyperDRUM with N=32
+
+########
+
+Encountered a NaN blow up! Fix the model/parameters...
+The maximal norms: 0.525238 0

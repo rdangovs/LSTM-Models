@@ -1,0 +1,2 @@
+model_checkpoint_path: "nlp_HyperLSTM_64False"
+all_model_checkpoint_paths: "nlp_HyperLSTM_64False"
