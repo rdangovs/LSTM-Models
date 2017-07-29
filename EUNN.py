@@ -97,113 +97,114 @@ def toTensorArray(elems):
 
 
 def EUNN_param(hidden_size, capacity=2, FFT=False, comp=False):
-	
-	theta_phi_initializer = init_ops.random_uniform_initializer(-np.pi, np.pi)
-	if FFT:
-		capacity = int(np.log2(hidden_size))
+	with tf.variable_scope("EUNN") as scope: 
+		scope.reuse_variables() 
+		theta_phi_initializer = init_ops.random_uniform_initializer(-np.pi, np.pi)
+		if FFT:
+			capacity = int(np.log2(hidden_size))
 
-		params_theta_0 = vs.get_variable("theta_0", [capacity, hidden_size/2], initializer=theta_phi_initializer)
-		cos_theta_0 = math_ops.cos(params_theta_0)
-		sin_theta_0 = math_ops.sin(params_theta_0)
-		
-		if comp:
+			params_theta_0 = vs.get_variable("theta_0", [capacity, hidden_size/2], initializer=theta_phi_initializer)
+			cos_theta_0 = math_ops.cos(params_theta_0)
+			sin_theta_0 = math_ops.sin(params_theta_0)
+			
+			if comp:
 
-			params_phi_0 = vs.get_variable("phi_0", [capacity, hidden_size/2], initializer=theta_phi_initializer)
-			cos_phi_0 = math_ops.cos(params_phi_0)
-			sin_phi_0 = math_ops.sin(params_phi_0)
+				params_phi_0 = vs.get_variable("phi_0", [capacity, hidden_size/2], initializer=theta_phi_initializer)
+				cos_phi_0 = math_ops.cos(params_phi_0)
+				sin_phi_0 = math_ops.sin(params_phi_0)
 
-			cos_list_0_re = array_ops.concat([cos_theta_0, math_ops.multiply(cos_theta_0, cos_phi_0)], 1)
-			cos_list_0_im = array_ops.concat([array_ops.zeros_like(cos_theta_0), math_ops.multiply(cos_theta_0, sin_phi_0)], 1)
-			sin_list_0_re = array_ops.concat([sin_theta_0, -math_ops.multiply(sin_theta_0, cos_phi_0)], 1)
-			sin_list_0_im = array_ops.concat([array_ops.zeros_like(sin_theta_0), -math_ops.multiply(sin_theta_0, sin_phi_0)], 1)
-			cos_list_0 = array_ops.unstack(math_ops.complex(cos_list_0_re, cos_list_0_im))
-			sin_list_0 = array_ops.unstack(math_ops.complex(sin_list_0_re, sin_list_0_im))
+				cos_list_0_re = array_ops.concat([cos_theta_0, math_ops.multiply(cos_theta_0, cos_phi_0)], 1)
+				cos_list_0_im = array_ops.concat([array_ops.zeros_like(cos_theta_0), math_ops.multiply(cos_theta_0, sin_phi_0)], 1)
+				sin_list_0_re = array_ops.concat([sin_theta_0, -math_ops.multiply(sin_theta_0, cos_phi_0)], 1)
+				sin_list_0_im = array_ops.concat([array_ops.zeros_like(sin_theta_0), -math_ops.multiply(sin_theta_0, sin_phi_0)], 1)
+				cos_list_0 = array_ops.unstack(math_ops.complex(cos_list_0_re, cos_list_0_im))
+				sin_list_0 = array_ops.unstack(math_ops.complex(sin_list_0_re, sin_list_0_im))
+
+			else:
+				cos_list_0 = array_ops.unstack(array_ops.concat([cos_theta_0, cos_theta_0], 1))
+				sin_list_0 = array_ops.unstack(array_ops.concat([sin_theta_0, -sin_theta_0], 1))
+
+			
+
+			ind, ind1 = permute_FFT(hidden_size)
+			ind1_list = array_ops.unstack(ind1)
+
+
+			diag_list_0 = []
+			off_list_0 = []
+			for i in range(capacity):
+				diag_list_0.append(permute(cos_list_0[i], ind1_list[i]))
+				off_list_0.append(permute(sin_list_0[i], ind1_list[i]))
+			v1 = array_ops.stack(diag_list_0, 0)
+			v2 = array_ops.stack(off_list_0, 0)
 
 		else:
-			cos_list_0 = array_ops.unstack(array_ops.concat([cos_theta_0, cos_theta_0], 1))
-			sin_list_0 = array_ops.unstack(array_ops.concat([sin_theta_0, -sin_theta_0], 1))
 
-		
+			params_theta_0 = vs.get_variable("theta_0", [int(capacity/2), int(hidden_size/2)], initializer=theta_phi_initializer)
+			cos_theta_0 = math_ops.cos(params_theta_0)
+			sin_theta_0 = math_ops.sin(params_theta_0)
 
-		ind, ind1 = permute_FFT(hidden_size)
-		ind1_list = array_ops.unstack(ind1)
+			if comp:
+				params_phi_0 = vs.get_variable("phi_0", [int(capacity/2), int(hidden_size/2)], initializer=theta_phi_initializer)
+				cos_phi_0 = math_ops.cos(params_phi_0)
+				sin_phi_0 = math_ops.sin(params_phi_0)
+
+				cos_list_0_re = array_ops.concat([cos_theta_0, math_ops.multiply(cos_theta_0, cos_phi_0)], 1)
+				cos_list_0_im = array_ops.concat([array_ops.zeros_like(cos_theta_0), math_ops.multiply(cos_theta_0, sin_phi_0)], 1)
+				sin_list_0_re = array_ops.concat([sin_theta_0, -math_ops.multiply(sin_theta_0, cos_phi_0)], 1)
+				sin_list_0_im = array_ops.concat([array_ops.zeros_like(sin_theta_0), -math_ops.multiply(sin_theta_0, sin_phi_0)], 1)
+				cos_list_0 = array_ops.unstack(math_ops.complex(cos_list_0_re, cos_list_0_im))
+				sin_list_0 = array_ops.unstack(math_ops.complex(sin_list_0_re, sin_list_0_im))
+			else:
+				cos_list_0 = array_ops.concat([cos_theta_0, cos_theta_0], 1)
+				sin_list_0 = array_ops.concat([sin_theta_0, -sin_theta_0], 1)			
 
 
-		diag_list_0 = []
-		off_list_0 = []
-		for i in range(capacity):
-			diag_list_0.append(permute(cos_list_0[i], ind1_list[i]))
-			off_list_0.append(permute(sin_list_0[i], ind1_list[i]))
-		v1 = array_ops.stack(diag_list_0, 0)
-		v2 = array_ops.stack(off_list_0, 0)
+			params_theta_1 = vs.get_variable("theta_1", [int(capacity/2), int(hidden_size/2)-1], initializer=theta_phi_initializer)
+			cos_theta_1 = math_ops.cos(params_theta_1)
+			sin_theta_1 = math_ops.sin(params_theta_1)
 
-	else:
+			if comp:
+				params_phi_1 = vs.get_variable("phi_1", [int(capacity/2), int(hidden_size/2)-1], initializer=theta_phi_initializer)
+				cos_phi_1 = math_ops.cos(params_phi_1)
+				sin_phi_1 = math_ops.sin(params_phi_1)
 
-		params_theta_0 = vs.get_variable("theta_0", [int(capacity/2), int(hidden_size/2)], initializer=theta_phi_initializer)
-		cos_theta_0 = math_ops.cos(params_theta_0)
-		sin_theta_0 = math_ops.sin(params_theta_0)
+				cos_list_1_re = array_ops.concat([np.ones((int(capacity/2),1)), cos_theta_1, math_ops.multiply(cos_theta_1, cos_phi_1), np.ones((int(capacity/2),1))], 1)
+				cos_list_1_im = array_ops.concat([np.zeros((int(capacity/2),1)), array_ops.zeros_like(cos_theta_1), math_ops.multiply(cos_theta_1, sin_phi_1), np.zeros((int(capacity/2),1))], 1)
+				sin_list_1_re = array_ops.concat([np.zeros((int(capacity/2),1)), sin_theta_1, -math_ops.multiply(sin_theta_1, cos_phi_1), np.zeros((int(capacity/2),1))], 1)
+				sin_list_1_im = array_ops.concat([np.zeros((int(capacity/2),1)), array_ops.zeros_like(sin_theta_1), -math_ops.multiply(sin_theta_1, sin_phi_1), np.zeros((int(capacity/2),1))], 1)
+				cos_list_1 = array_ops.unstack(math_ops.complex(cos_list_1_re, cos_list_1_im))
+				sin_list_1 = array_ops.unstack(math_ops.complex(sin_list_1_re, sin_list_1_im))
+			else:
+				cos_list_1 = array_ops.concat([np.ones((int(capacity/2),1)), cos_theta_1, cos_theta_1, np.ones((int(capacity/2),1))], 1)
+				sin_list_1 = array_ops.concat([np.zeros((int(capacity/2),1)), sin_theta_1, -sin_theta_1, np.zeros((int(capacity/2),1))], 1)
+
+
+
+
+
+
+			ind, ind3, ind4 = permute_tunable(hidden_size, capacity)
+			
+			diag_list_0 = permute(cos_list_0, ind3)
+			off_list_0 = permute(sin_list_0, ind3)
+			diag_list_1 = permute(cos_list_1, ind4)
+			off_list_1 = permute(sin_list_1, ind4)
+
+			v1 = tf.reshape(tf.concat([diag_list_0, diag_list_1], 1), [capacity, hidden_size])
+			v2 = tf.reshape(tf.concat([off_list_0, off_list_1], 1), [capacity, hidden_size])
+
 
 		if comp:
-			params_phi_0 = vs.get_variable("phi_0", [int(capacity/2), int(hidden_size/2)], initializer=theta_phi_initializer)
-			cos_phi_0 = math_ops.cos(params_phi_0)
-			sin_phi_0 = math_ops.sin(params_phi_0)
-
-			cos_list_0_re = array_ops.concat([cos_theta_0, math_ops.multiply(cos_theta_0, cos_phi_0)], 1)
-			cos_list_0_im = array_ops.concat([array_ops.zeros_like(cos_theta_0), math_ops.multiply(cos_theta_0, sin_phi_0)], 1)
-			sin_list_0_re = array_ops.concat([sin_theta_0, -math_ops.multiply(sin_theta_0, cos_phi_0)], 1)
-			sin_list_0_im = array_ops.concat([array_ops.zeros_like(sin_theta_0), -math_ops.multiply(sin_theta_0, sin_phi_0)], 1)
-			cos_list_0 = array_ops.unstack(math_ops.complex(cos_list_0_re, cos_list_0_im))
-			sin_list_0 = array_ops.unstack(math_ops.complex(sin_list_0_re, sin_list_0_im))
+			omega = vs.get_variable("omega", [hidden_size], initializer=theta_phi_initializer)
+			D = math_ops.complex(math_ops.cos(omega), math_ops.sin(omega))
 		else:
-			cos_list_0 = array_ops.concat([cos_theta_0, cos_theta_0], 1)
-			sin_list_0 = array_ops.concat([sin_theta_0, -sin_theta_0], 1)			
+			D = None
 
-
-		params_theta_1 = vs.get_variable("theta_1", [int(capacity/2), int(hidden_size/2)-1], initializer=theta_phi_initializer)
-		cos_theta_1 = math_ops.cos(params_theta_1)
-		sin_theta_1 = math_ops.sin(params_theta_1)
-
-		if comp:
-			params_phi_1 = vs.get_variable("phi_1", [int(capacity/2), int(hidden_size/2)-1], initializer=theta_phi_initializer)
-			cos_phi_1 = math_ops.cos(params_phi_1)
-			sin_phi_1 = math_ops.sin(params_phi_1)
-
-			cos_list_1_re = array_ops.concat([np.ones((int(capacity/2),1)), cos_theta_1, math_ops.multiply(cos_theta_1, cos_phi_1), np.ones((int(capacity/2),1))], 1)
-			cos_list_1_im = array_ops.concat([np.zeros((int(capacity/2),1)), array_ops.zeros_like(cos_theta_1), math_ops.multiply(cos_theta_1, sin_phi_1), np.zeros((int(capacity/2),1))], 1)
-			sin_list_1_re = array_ops.concat([np.zeros((int(capacity/2),1)), sin_theta_1, -math_ops.multiply(sin_theta_1, cos_phi_1), np.zeros((int(capacity/2),1))], 1)
-			sin_list_1_im = array_ops.concat([np.zeros((int(capacity/2),1)), array_ops.zeros_like(sin_theta_1), -math_ops.multiply(sin_theta_1, sin_phi_1), np.zeros((int(capacity/2),1))], 1)
-			cos_list_1 = array_ops.unstack(math_ops.complex(cos_list_1_re, cos_list_1_im))
-			sin_list_1 = array_ops.unstack(math_ops.complex(sin_list_1_re, sin_list_1_im))
-		else:
-			cos_list_1 = array_ops.concat([np.ones((int(capacity/2),1)), cos_theta_1, cos_theta_1, np.ones((int(capacity/2),1))], 1)
-			sin_list_1 = array_ops.concat([np.zeros((int(capacity/2),1)), sin_theta_1, -sin_theta_1, np.zeros((int(capacity/2),1))], 1)
-
-
-
-
-
-
-		ind, ind3, ind4 = permute_tunable(hidden_size, capacity)
-		
-		diag_list_0 = permute(cos_list_0, ind3)
-		off_list_0 = permute(sin_list_0, ind3)
-		diag_list_1 = permute(cos_list_1, ind4)
-		off_list_1 = permute(sin_list_1, ind4)
-
-		v1 = tf.reshape(tf.concat([diag_list_0, diag_list_1], 1), [capacity, hidden_size])
-		v2 = tf.reshape(tf.concat([off_list_0, off_list_1], 1), [capacity, hidden_size])
-
-
-	if comp:
-		omega = vs.get_variable("omega", [hidden_size], initializer=theta_phi_initializer)
-		D = math_ops.complex(math_ops.cos(omega), math_ops.sin(omega))
-	else:
-		D = None
-
-	v1 = toTensorArray(v1)
-	v2 = toTensorArray(v2)
-	ind = toTensorArray(ind)
-	diag = D
+		v1 = toTensorArray(v1)
+		v2 = toTensorArray(v2)
+		ind = toTensorArray(ind)
+		diag = D
 
 	return v1, v2, ind, diag, capacity
 

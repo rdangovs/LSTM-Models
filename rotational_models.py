@@ -3,24 +3,11 @@ from __future__ import division
 from __future__ import print_function
 
 import tensorflow as tf
-
-from tensorflow.python.framework import constant_op
-from tensorflow.python.framework import dtypes
-from tensorflow.python.framework import ops
-from tensorflow.python.framework import tensor_shape
-from tensorflow.python.framework import tensor_util
-from tensorflow.python.layers import base as base_layer
 from tensorflow.python.ops import array_ops
-from tensorflow.python.ops import clip_ops
 from tensorflow.python.ops import init_ops
 from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import nn_ops
-from tensorflow.python.ops import partitioned_variables
-from tensorflow.python.ops import random_ops
 from tensorflow.python.ops import variable_scope as vs
-from tensorflow.python.ops import variables as tf_variables
-from tensorflow.python.platform import tf_logging as logging
-from tensorflow.python.util import nest
 
 from tensorflow.python.ops.rnn_cell_impl import RNNCell
 from tensorflow.python.ops.rnn_cell_impl import _linear
@@ -52,6 +39,9 @@ def _rotation(x,
 		a tensor, which is the unitary rotation matrix U(x,y)
 	"""
 
+	if size_batch == None: 
+		size_batch = tf.shape(x)[0]
+
 	#construct the 2x2 rotation
 	u = tf.nn.l2_normalize(x, 1, epsilon = eps)
 	costh = tf.reduce_sum(u * tf.nn.l2_normalize(y, 1, epsilon = eps), 1)
@@ -69,12 +59,8 @@ def _rotation(x,
 	#do the batch matmul 
 	step4 = tf.reshape(u, [size_batch, hidden_size, 1])
 	step5 = tf.reshape(v, [size_batch, hidden_size, 1])
+	return step4, step5, step3, Rth 
 	
-	return (tf.eye(hidden_size, batch_shape = [size_batch]) - 
-		   tf.matmul(step4, tf.transpose(step4, [0,2,1])) - 
-		   tf.matmul(step5, tf.transpose(step5, [0,2,1])) - 
-		   tf.matmul(tf.matmul(tf.transpose(step3, [0,2,1]), Rth), step3))
-
 def _modReLU(x, bias):
 	return relu(math_ops.abs(x) + tf.constant(0.00001) + bias) * sign(x)
 
@@ -124,17 +110,26 @@ class GRRUCell(RNNCell):
 			#We get the rotation between the mixed x and r, which acts on the mixed h 			
 			x_mixed = _linear(inputs, self._hidden_size, True, self._bias_initializer, self._kernel_initializer)
 			U  = _rotation(x_mixed, r, self._size_batch, self._hidden_size)
-
-			if self._is_modrelu: 
-				bias_c = vs.get_variable("bias_c", [self._size_batch, self._hidden_size], 
-					                     dtype = tf.float32, initializer = init_ops.constant_initializer(self._modrelu_const)) 
-				c = _modReLU(x_mixed + tf.reshape(tf.matmul(U, tf.reshape(state, 
-							[self._size_batch, self._hidden_size, 1])), [self._size_batch, self._hidden_size]), bias_c)			
-			else:
-				c = self._activation(x_mixed + tf.reshape(tf.matmul(U, tf.reshape(state, 
-								[self._size_batch, self._hidden_size, 1])), [self._size_batch, self._hidden_size]))			
+			h = tf.reshape(state, [self._size_batch, self._hidden_size, 1])
+			state_new =	(state + tf.reshape(	
+							- tf.matmul(U[0], tf.matmul(tf.transpose(U[0], [0,2,1]), h))
+							- tf.matmul(U[1], tf.matmul(tf.transpose(U[1], [0,2,1]), h)) 
+							+ tf.matmul(tf.transpose(U[2], [0,2,1]), tf.matmul(U[3], tf.matmul(U[2], h))),
+							[self._size_batch, self._hidden_size]
+						))
+			c = self._activation(x_mixed + state_new)
 		new_h = u * state + (1 - u) * c
 		return new_h, new_h
+
+
+
+
+
+
+
+
+
+
 
 class BasicLSTRMCell(RNNCell):
 	"""

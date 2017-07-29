@@ -13,6 +13,7 @@ from EURNN import EURNNCell
 from GORU import GORUCell
 from rotational_models import GRRUCell, BasicLSTRMCell
 from supercell_DRUM import HyperLSTMCell, HyperDRUMCell
+from drum import DRUMCell
 
 from ptb_iterator import *
 import re
@@ -32,11 +33,11 @@ def file_data(stage, n_batch, n_data, T, n_epochs, vocab_to_idx,readIntegers=Tru
 
 	if not word_level:
 		if stage == 'train':
-			file_name = 'data/ptb.train.txt'
+			file_name = 'data/ptb.char.train.txt'
 		elif stage == 'valid':
-			file_name = 'data/ptb.valid.txt'	
+			file_name = 'data/ptb.char.valid.txt'	
 		elif stage == 'test':
-			file_name = 'data/ptb.test.txt'
+			file_name = 'data/ptb.char.test.txt'
 	else:
 		if stage == 'train':
 			file_name = 'data/ptb.train_words_nodigits_new.txt'
@@ -47,7 +48,9 @@ def file_data(stage, n_batch, n_data, T, n_epochs, vocab_to_idx,readIntegers=Tru
 
 	with open(file_name,'r') as f:
 		raw_data = f.read()
-		print("Data length: " , len(raw_data))
+	raw_data = raw_data.replace('\n', '')
+	raw_data = raw_data.replace(' ', '')
+	print("Data length: " , len(raw_data))
 
 	if word_level:
 		if readIntegers:
@@ -55,7 +58,8 @@ def file_data(stage, n_batch, n_data, T, n_epochs, vocab_to_idx,readIntegers=Tru
 
 
 	if vocab_to_idx == None:
-		vocab = set(raw_data)
+		vocab = sorted(set(raw_data))
+		print(vocab)
 		vocab_size = len(vocab)
 		print("Vocab size: ", vocab_size)
 
@@ -65,18 +69,14 @@ def file_data(stage, n_batch, n_data, T, n_epochs, vocab_to_idx,readIntegers=Tru
 		for index, item in enumerate(vocab):
 			idx_to_vocab[index] = item
 			vocab_to_idx[item] = index
-	#idx_to_vocab = dict(enumerate(vocab))
-	#now flip this dictionary
-	#Flip this dictionary
-	#vocab_to_idx = dict(zip(idx_to_vocab.values(), idx_to_vocab.keys()))
+
 	data = [vocab_to_idx[c] for c in raw_data][:n_data]
 	print("Total data length: " , len(data))
 
-	# print(data[0:1000])
+	if T == -1: 
+		T = len(data) - 1
+	print("The number of batch elements is: ", n_batch) 
 
-	#Deal with batch size >.<
-
-	#Numsteps is your sequence length. In this case the earlier formula. 
 	def gen_epochs(n, numsteps, n_batch):
 		for i in range(n):
 			yield ptb_iterator(data, n_batch, numsteps)
@@ -84,68 +84,65 @@ def file_data(stage, n_batch, n_data, T, n_epochs, vocab_to_idx,readIntegers=Tru
 	print("Sequence length: ", T)
 	myepochs = gen_epochs(n_epochs, T, n_batch)
 	print(myepochs)
+	# # input() 
 
 	return myepochs, vocab_to_idx
 
-# file_data('train', 20, 10000000, 50, 20)
+#Should we remove the start-of-sentence character? What character is it?
 
 def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT, 
 		 learning_rate, decay, ismodrelu, modrelu_const, istanh, 
 		 learning_rate_decay, piecewise_rate_decay, memory, optimization,
 		 isclipping, model_save_to, isdropout, dropout_keep_prob):
 	# --- Set data params ----------------
-	
-	## makes the modReLU negative
-	modrelu_const *= -1 
-	#
 
+	modrelu_const *= -1 
 
 	#Create Data
+
+	#What is n_batch for the validation and the training?
 	max_len_data = 1000000000
 	epoch_train, vocab_to_idx = file_data('train', n_batch, max_len_data, T, n_epochs, None)
 	n_input = len(vocab_to_idx)
-	epoch_val, _ = file_data('valid', n_batch, max_len_data, T, 10000, vocab_to_idx)
-	epoch_test, _ = file_data('test', n_batch, max_len_data, T, 1, vocab_to_idx)
+	epoch_val, _ = file_data('valid', 1, max_len_data, -1, 10000, vocab_to_idx)
+	#no need to generate 10000 epochs here, I think
+	epoch_test, _ = file_data('test', 1, max_len_data, -1, 1, vocab_to_idx)
 	n_output = n_input
 
 
 	# --- Create graph and compute gradients ----------------------
-	x = tf.placeholder("int32", [None, T])
-	y = tf.placeholder("int64", [None, T])
+	x = tf.placeholder("int32", [None, None])
+	y = tf.placeholder("int64", [None, None])
+	i_s = tf.placeholder("float", [None, n_hidden])
 
 	n_embed = 30
 	if (word_level):
 		embed_init_val = np.sqrt(6.)/np.sqrt(n_input)
-		embed = tf.get_variable('Embedding', [n_input, n_embed] ,initializer = init_ops.random_normal_initializer(-embed_init_val, embed_init_val), dtype=tf.float32)
+		embed = tf.get_variable('Embedding', [n_input, n_embed], initializer = init_ops.random_normal_initializer(-embed_init_val, embed_init_val), dtype=tf.float32)
 		input_data = tf.nn.embedding_lookup(embed, x)
 		n_input = n_embed
 
 	else:	
 		input_data = tf.one_hot(x, n_input, dtype=tf.float32)
 
-
 	# Input to hidden layer
 	cell = None
 	h = None
-	#h_b = None
 	if model == "LSTM":
 		cell = BasicLSTMCell(n_hidden, state_is_tuple=True, forget_bias=1)
 		if h == None:
 			h = cell.zero_state(n_batch,tf.float32)
-		hidden_out, states = tf.nn.dynamic_rnn(cell, input_data, dtype=tf.float32)
+		hidden_out, states = tf.nn.dynamic_rnn(cell, input_data, dtype=tf.float32, initial_state = h)
 	elif model == "GRU":
 		cell = GRUCell(n_hidden)
 		if h == None:
 			h = cell.zero_state(n_batch,tf.float32)
 		hidden_out, states = tf.nn.dynamic_rnn(cell, input_data, dtype=tf.float32)
-	elif model == "GRRU":
-		cell = GRRUCell(n_hidden, size_batch = n_batch, is_modrelu = ismodrelu, modrelu_const = modrelu_const)
-		if h == None:
-			h = cell.zero_state(n_batch,tf.float32)
-		hidden_out, states = tf.nn.dynamic_rnn(cell, input_data, dtype=tf.float32)
+	elif model == "DRUM":
+		cell = DRUMCell(n_hidden, size_batch = n_batch)
+		hidden_out, states = tf.nn.dynamic_rnn(cell, input_data, dtype=tf.float32, 
+											   initial_state = i_s)
 	elif model == "HyperLSTM": 
-		#print(HyperLSTMCell, type(HyperLSTMCell))
-		#input()
 		cell = HyperLSTMCell(n_hidden)
 		if h == None: 
 			h = cell.zero_state(n_batch,tf.float32)
@@ -191,8 +188,14 @@ def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT,
 
 	if istanh: 
 		hidden_out = tanh(hidden_out)
-	hidden_out_list = tf.unstack(hidden_out, axis=1)
-	temp_out = tf.stack([tf.matmul(i, V_weights) for i in hidden_out_list])
+
+	sh = tf.shape(hidden_out)
+	tmp_out = tf.matmul(tf.reshape(hidden_out,[-1,n_hidden]), V_weights) 
+	temp_out = tf.reshape(tmp_out, [sh[1], sh[0], n_output])
+
+	# # depreciated: remove soon 
+	#hidden_out_list = tf.unstack(hidden_out, axis=1)
+	#temp_out = tf.stack([tf.matmul(i, V_weights) for i in hidden_out_list])
 	output_data = tf.nn.bias_add(tf.transpose(temp_out, [1,0,2]), V_bias) 
 	if isdropout: 
 		output_data = tf.nn.dropout(output_data, dropout_keep_prob)
@@ -205,8 +208,6 @@ def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT,
 
 
 	# --- Initialization ----------------------
-
-	##
 	if learning_rate_decay:
 		global_step = tf.Variable(0, trainable = False)
 		starter_learning_rate = learning_rate
@@ -219,7 +220,6 @@ def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT,
 		learning_rate_final = tf.train.piecewise_constant(global_step, boundaries, values)
 	else:
 		learning_rate_final = learning_rate
-	##
 
 	if optimization == "RMSProp":
 		optimizer = tf.train.RMSPropOptimizer(learning_rate=learning_rate_final, decay=decay).minimize(cost)
@@ -232,16 +232,16 @@ def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT,
 	print("\n###")
 	sumz = 0 
 	for i in tf.global_variables():
-		#print(i.name)
+		print(i.name)
 		print(i.name, i.shape, np.prod(np.array(i.get_shape().as_list())))
 		sumz += np.prod(np.array(i.get_shape().as_list()))
 	print("# parameters: ", sumz)
 	print("###\n")
-	## input()
+	## input() 
+
 
 	# --- save result ----------------------
 	filename = "./output/character/T=" + str(T) + "/" + model  + "_N=" + str(n_hidden) + "_lambda=" + str(learning_rate) + "_E=" + str(n_epochs) #"_beta=" + str(decay)
-	
 	if istanh: 
 		print("Tanh!")
 		filename += "_tanh"
@@ -285,14 +285,7 @@ def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT,
 	f.write("\n\n")
 	f.write("########\n\n")
 
-
-	
-
-	# --- baseline -----
-	
 	# --- Training Loop ---------------------------------------------------------------
-
-
 	if model_save_to == "my-model":
 		print("Autogenerating the save name")
 		model_save_to = "nlp_"+str(model)+"_"+str(n_hidden)+str(istanh)
@@ -306,8 +299,6 @@ def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT,
 				if exc.errno != errno.EEXIST:
 					raise
 
-
-
 	def do_validation(m1, m2):
 		j = 0
 		val_losses = []
@@ -317,21 +308,21 @@ def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT,
 			if j >= 2:
 				break
 			print("Running validation...")
-			val_state = None
+			val_state = np.zeros((1, n_hidden), dtype = np.float)
 			for stepb, (X_val,Y_val) in enumerate(val):
 				val_batch_x = X_val
 				val_batch_y = Y_val
-				val_dict = {x:val_batch_x,y:val_batch_y}
-				if val_state is not None:
-					#This needs to be initialized from the original net creation. 
-					val_dict[h] = val_state
+				print(stepb)
+				val_dict = {x:val_batch_x, y:val_batch_y, i_s:val_state}
 				if notstates:
 					val_acc,val_loss = sess.run([accuracy,cost],feed_dict=val_dict)
 				else:
-					val_acc, val_loss, val_state = sess.run([accuracy, cost,states],feed_dict=val_dict)
+					val_acc, val_loss, val_state = sess.run([accuracy, cost, states],feed_dict=val_dict)
 				val_losses.append(val_loss)
 				val_accuracies.append(val_acc)
 		print("Validations:", )
+		
+		#averaging process here...
 		validation_losses.append(sum(val_losses)/len(val_losses))
 		validation_accuracies.append(sum(val_accuracies)/len(val_accuracies))
 		print("Validation Loss= " + \
@@ -351,7 +342,6 @@ def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT,
 										    allow_soft_placement = False,
 										    gpu_options = gpu_options)) as sess:
 		print("Session Created")
-
 		# if loadFrom != "":
 		# 	new_saver = tf.train.import_meta_graph(loadFrom+'.meta')
 		# 	new_saver.restore(sess, tf.train.latest_checkpoint('./'))
@@ -368,34 +358,22 @@ def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT,
 		validation_accuracies = [] 
 
 		sess.run(init)
-		training_state = None
+		training_state = np.zeros((n_batch, n_hidden), dtype = np.float)
+
 		i = 0
 		t = 0
 		mx2 = 0
 		for epoch in epoch_train:
 			print("Epoch: " , i)
-
 			for step, (X,Y) in enumerate(epoch):
 				batch_x = X
 				batch_y = Y
-				myfeed_dict={x: batch_x, y: batch_y}
-				if training_state is not None:
-					myfeed_dict[h] = training_state
+				myfeed_dict={x: batch_x, y: batch_y, i_s: training_state}
 
-				# if training_state is not None:
-				# #	#This needs to be initialized from the original net creation. 
-					
-				#myfeed_dict[h] = training_state
-				# 	#print("State: " , training_state)
-					#print("Comp : ", training_state[0])
-
-					#print("Sum: " , sum([i*i for i in training_state[0]]))
-				#print("Feed dict: " , myfeed_dict)
 				if notstates:
 					_, acc, loss = sess.run([optimizer, accuracy, cost], feed_dict = myfeed_dict)
 				else:
-					empty,acc,loss,training_state = sess.run([optimizer, accuracy, cost, states], feed_dict = myfeed_dict)
-				#print("Sum: " , sum([i*i for i in training_state[0]]))
+					empty, acc, loss, training_state = sess.run([optimizer, accuracy, cost, states], feed_dict = myfeed_dict)
 
 				print("Iter " + str(t) + ", Minibatch Loss= " + \
 					  "{:.6f}".format(loss) + ", Training Accuracy= " + \
@@ -407,7 +385,7 @@ def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT,
 				t += 1
 
 				## output hidden value
-				tmp = sess.run(hidden_out, feed_dict={x: batch_x, y: batch_y})
+				tmp = sess.run(hidden_out, feed_dict=myfeed_dict)
 				print(tmp.size, tmp.shape)
 				mx = 0
 				for i in range(T):
@@ -426,17 +404,10 @@ def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT,
 					sys.exit()
 
 				#finer validation!!
-				if step % 60 == 59:
+				if step % 10 == 9:
 					do_validation(mx, mx2)
 					saver.save(sess,savename)
-					#Now I need to take an epoch and go through it. I will average the losses at the end
-						# f2.write("%d\t%f\t%f\n"%(step, loss, acc))
-					# f.flush()
-					# f2.flush()
-				# mystates = sess.run(states, feed_dict=myfeed_dict)
-				# print ("States",training_state)
 			i += 1
-
 		print("Optimization Finished!")
 		
 		
@@ -474,13 +445,13 @@ def main(model, T, n_epochs, n_batch, n_hidden, capacity, comp, FFT,
 
 if __name__=="__main__":
 	parser = argparse.ArgumentParser(
-		description="Copying Memory Problem")
+		description="Penn Treebank Problem")
 
 	parser.add_argument("model", default='LSTM', help='Model name: LSTM, EURNN, GRU, GORU, GRRU, LSTRM, LSTUM, HyperLSTM, HyperDRUM')
 	parser.add_argument('-T', type=int, default=50, help='T-gram')
 	parser.add_argument("--n_epochs", '-E', type=int, default=20, help='num epochs')
 	parser.add_argument('--n_batch', '-B', type=int, default=32, help='batch size')
-	parser.add_argument('--n_hidden', '-H', type=int, default=32, help='hidden layer size')
+	parser.add_argument('--n_hidden', '-H', type=int, default=64, help='hidden layer size')
 	parser.add_argument('--capacity', '-L', type=int, default=2, help='Tunable style capacity, only for EURNN, default value is 2')
 	parser.add_argument('--comp', '-C', type=str, default="False", help='Complex domain or Real domain. Default is False: real domain')
 	parser.add_argument('--FFT', '-F', type=str, default="False", help='FFT style, default is False')

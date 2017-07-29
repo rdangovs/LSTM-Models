@@ -1,0 +1,2 @@
+model_checkpoint_path: "/Users/Darumen/Desktop/Darumen/MIT/UROP_eunn/Work/Models/output/PTB/LSTM/small/model.ckpt-0"
+all_model_checkpoint_paths: "/Users/Darumen/Desktop/Darumen/MIT/UROP_eunn/Work/Models/output/PTB/LSTM/small/model.ckpt-0"

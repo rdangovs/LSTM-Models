@@ -1,0 +1,2 @@
+Epoch: 1 Learning rate: 1.000 
+0.008 perplexity: 65531.775 speed: 34 wps 

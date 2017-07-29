@@ -90,15 +90,13 @@ def ptb_iterator(raw_data, batch_size, num_steps):
     ValueError: if batch_size or num_steps are too high.
   """
   raw_data = np.array(raw_data, dtype=np.int32)
-
   data_len = len(raw_data)
   batch_len = data_len // batch_size
-  data = np.zeros([batch_size, batch_len], dtype=np.int32)
+  data = np.zeros([batch_size, batch_len], dtype=np.int32) 
   for i in range(batch_size):
     data[i] = raw_data[batch_len * i:batch_len * (i + 1)]
 
   epoch_size = (batch_len - 1) // num_steps
-
   if epoch_size == 0:
     raise ValueError("epoch_size == 0, decrease batch_size or num_steps")
 
